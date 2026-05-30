@@ -1,92 +1,296 @@
+# AGENTS.md
+
+> Read this file before every prompt. Follow it strictly.
+
+---
+
 ## Role
-You are an expert React Native, Edge AI, and Native Bridge (C++/Java/Swift) engineer helping me build the offline authentication module for the NHAI Datalake 3.0 app. 
-Write clean, simple, highly optimized code. Prioritize execution speed and minimal app bloating over unnecessary abstraction. Think like a senior mobile systems developer working in zero-network environments.
+
+You are a senior React Native and Expo engineer helping build the **Datalake Biometric** module — a fully offline facial recognition and liveness detection feature integrated into the Datalake 3.0 app.
+
+Write clean, simple, maintainable code. Prioritize clarity over abstraction. Every file should be understandable to a teammate seeing it for the first time.
+
+---
 
 ## Project Overview
-We are building a highly accurate, lightweight, and entirely offline facial recognition and liveness detection module.
-The app includes:
-- Live camera frame processing using `react-native-vision-camera`.
-- Offline Liveness Detection (requiring active movement like blinking or smiling) to prevent spoofing.
-- Offline Facial Recognition matching live faces against locally stored mathematical feature vectors.
-- A Sync & Purge Mechanism that stores attendance logs offline and syncs/deletes them when the network is restored.
 
-Keep the implementation extremely fast. Processing must take < 1 second on mid-range devices.
+We are building **Datalake Biometric**, an offline facial recognition and liveness detection module for the Datalake 3.0 React Native app.
+
+The app authenticates field personnel in zero-network zones using the device camera. It captures face data locally, runs it through an on-device AI model, and syncs attendance records to AWS once connectivity is restored.
+
+The app has two parallel ownership zones:
+
+- **App Dev Team** (this agent's scope): UI screens, camera input interface, local storage, sync/purge mechanism, navigation, and the bridge layer that feeds camera frames to the AI model.
+- **AI Model Team** (separate scope): The TFLite face recognition and liveness detection model, inference logic, and model output parsing.
+
+This file governs the **App Dev** side only.
+
+---
 
 ## Tech Stack
-- React Native (Development build, NOT Expo Go)
-- TypeScript
-- NativeWind (for styling)
-- Zustand (for state management)
-- AsyncStorage (for local persistence)
-- `react-native-vision-camera` (for JSI frame processing)
-- TensorFlow Lite / ONNX (for the <20MB quantized offline AI models)
 
-**STRICT BANS:** Do NOT use Clerk, Firebase, AWS Cognito, Google ML Kit, or any cloud-based SDKs. The solution must use ONLY open-source technologies with no additional licenses required.
+| Layer | Library |
+|---|---|
+| Framework | Expo (React Native) |
+| Language | TypeScript (strict mode) |
+| Styling | NativeWind |
+| State | Zustand |
+| Persistence | AsyncStorage (`@react-native-async-storage/async-storage`) |
+| Camera | `expo-camera` |
+| Local DB | SQLite via `expo-sqlite` |
+| Navigation | Expo Router |
+| Network | `@react-native-community/netinfo` |
+| AWS Sync | AWS SDK (REST calls via `fetch`, no native SDK) |
+
+Do not introduce new major libraries without asking first. Prefer Expo-managed libraries when possible.
+
+---
 
 ## Development Philosophy
-Build feature by feature.
-For every feature:
-1. Read this file first.
-2. The network is presumed DEAD. Never write code that relies on an API fetch for core functionality.
-3. Keep the AI model footprint under 20MB.
-4. Use React Native JSI (JavaScript Interface) for passing camera frames. Do NOT pass Base64 image strings over the standard React Native bridge, as it will crash mid-range devices.
-5. Refactor only when repetition appears.
 
-## Decision Making
-If something is unclear or could be improved, suggest a better approach.
-If a new library would significantly help, recommend it, explain why, and ask before adding it. 
-Do not install new libraries without approval. 
+- Build one feature at a time. One screen. One mechanism. Not three.
+- Simplest working version first. Refactor only when repetition appears.
+- Readable code over clever code.
+- Every function should do one thing and be named after what it does.
+- Leave explicit `// TODO: AI Team` comments wherever the AI model will plug in.
+- Never mix UI logic with model inference logic. The boundary between app-dev and AI-model code must be clean and explicit.
+
+---
 
 ## Architecture
-Use this folder structure:
-- `app/` (routes and screens)
-- `components/` (reusable UI like CameraOverlay, AttendanceCard)
-- `android/` and `ios/` (Native code for the TFLite bridge wrappers)
-- `assets/models/` (Where the .tflite quantized models live)
-- `lib/` (Mathematical vector comparison logic like Cosine Similarity)
-- `store/` (Zustand stores for Sync & Purge logs)
+
+```
+app/
+  (auth)/           # Login / biometric enrollment screens
+  (tabs)/           # Main nav tabs if applicable
+  index.tsx         # Entry point, redirects based on auth state
+
+components/
+  camera/           # Camera preview, face overlay, liveness UI prompts
+  sync/             # Sync status badge, sync progress UI
+  common/           # Shared UI: buttons, cards, status indicators
+
+constants/
+  images.ts         # Centralized image imports
+  config.ts         # App-wide constants (timeouts, thresholds, endpoint URLs)
+
+hooks/
+  useNetworkStatus.ts   # Watches connectivity changes
+  useSyncQueue.ts       # Reads pending records and triggers sync
+  useCameraSession.ts   # Manages camera lifecycle
+
+lib/
+  cameraInterface.ts    # THE BRIDGE: exports the function AI team will implement
+  syncService.ts        # AWS upload logic, purge logic
+  db.ts                 # SQLite helpers (read/write attendance records)
+  storage.ts            # AsyncStorage wrappers
+
+store/
+  authStore.ts          # Enrolled user identity, session state
+  syncStore.ts          # Pending records count, last sync timestamp, sync status
+
+types/
+  index.ts              # All shared TypeScript types in one place
+
+assets/
+  images/               # All app images, named descriptively
+```
+
+**Rule**: Screens in `app/` only compose components and call hooks or stores. No business logic in screens.
+
+**Rule**: `lib/cameraInterface.ts` is the **only file the AI Team needs to touch** to plug in their model. App dev code calls this file's exported functions; it never calls model code directly.
+
+---
+
+## The Camera–Model Bridge (`lib/cameraInterface.ts`)
+
+This is the most important architectural boundary in the project.
+
+The App Dev team owns the **caller side**. The AI Model team owns the **implementation side**.
+
+### What app-dev code will call:
+
+```ts
+// lib/cameraInterface.ts
+
+export type FaceVerificationInput = {
+  frameData: string;        // base64 encoded camera frame
+  enrolledFaceDescriptor: number[]; // stored during enrollment
+};
+
+export type FaceVerificationResult = {
+  isMatch: boolean;
+  livenessConfirmed: boolean;
+  confidence: number;       // 0.0 – 1.0
+  error?: string;
+};
+
+// TODO: AI Team — implement this function using your TFLite model
+export async function verifyFace(
+  input: FaceVerificationInput
+): Promise<FaceVerificationResult> {
+  // Placeholder — replace with real model inference
+  throw new Error('verifyFace() not yet implemented by AI Team');
+}
+
+export type EnrollmentInput = {
+  frameData: string;        // base64 encoded camera frame
+};
+
+export type EnrollmentResult = {
+  faceDescriptor: number[]; // embedding to store for future verification
+  error?: string;
+};
+
+// TODO: AI Team — implement this function for enrollment
+export async function enrollFace(
+  input: EnrollmentInput
+): Promise<EnrollmentResult> {
+  throw new Error('enrollFace() not yet implemented by AI Team');
+}
+```
+
+**Do not change the function signatures without coordinating with both teams.**
+
+---
+
+## Local Data Model
+
+### AttendanceRecord (stored in SQLite)
+
+```ts
+type AttendanceRecord = {
+  id: string;               // UUID, generated locally
+  userId: string;           // enrolled user ID
+  timestamp: string;        // ISO 8601
+  confidence: number;       // from FaceVerificationResult
+  livenessConfirmed: boolean;
+  synced: boolean;          // false until successfully pushed to AWS
+  syncedAt?: string;        // ISO 8601, set after sync
+};
+```
+
+### Sync/Purge Flow
+
+1. After successful face verification, write an `AttendanceRecord` with `synced: false` to SQLite.
+2. `useSyncQueue` hook watches network status via `useNetworkStatus`.
+3. When connectivity is restored, `syncService.ts` picks up all records where `synced = false`.
+4. Each record is uploaded to AWS via REST. On success, mark `synced = true` and set `syncedAt`.
+5. Purge: after all records in a batch are confirmed synced, delete them from SQLite. Never purge unsynced records.
+6. Sync state (pending count, last sync time, in-progress flag) lives in `syncStore.ts`.
+
+---
 
 ## UI Rules
-For any UI task:
-- Keep the design utilitarian, mimicking standard enterprise government applications (Datalake 3.0). 
-- Prioritize high-contrast, readable text for outdoor sunlight conditions.
+
+- UI must work on Android 8.0+ and iOS 12+.
+- Minimum supported device: 3GB RAM, mid-range processor.
+- Camera preview must be full-screen or near full-screen. No cluttered overlays.
+- Liveness prompts (blink, smile, turn head) must be displayed clearly in large readable text or icon above the camera frame.
+- Sync status must always be visible — use a persistent status badge (connected / offline / syncing / X pending).
+- Dark UI preferred for camera screens (reduces glare for outdoor use).
+- Use high-contrast text. Field personnel may use the app in bright sunlight.
+
+---
 
 ## Styling Rules
-Use NativeWind classes. Do not use StyleSheet unless it is not possible to style with className.
-Use the NativeWind version installed in this project. Check package.json.
 
-**Style Exception List**
-Use StyleSheet or inline styles for:
-- SafeAreaView
-- `<Camera />` component from `react-native-vision-camera`
-- Reanimated views
+Use NativeWind classes everywhere possible. Do not use `StyleSheet` unless listed below.
 
-Everywhere else, use NativeWind.
+### StyleSheet exceptions (use inline style or StyleSheet here):
 
-## State Rules & Sync/Purge
-- **Zustand** for global client state.
-- **AsyncStorage** for persistence.
-- **Sync & Purge Rule:** All offline attendance verifications must be saved as JSON to AsyncStorage. When a network connection is detected, sync the JSON array to the server. Upon a `200 OK` success response, you MUST immediately wipe the local logs to free up storage.
+- `SafeAreaView`
+- `Modal`
+- `Animated.View`
+- `KeyboardAvoidingView`
+- Platform-specific shadow styles
+- Dynamic styles computed at runtime (e.g., progress bar width)
 
-## TypeScript
-- Strict mode.
-- No `any`.
-- Keep types simple and readable.
+---
 
-## Feature Implementation
-When building a feature:
-1. Read this file first.
-2. Identify the files to change.
-3. Keep changes focused.
-4. Make sure the feature works end to end completely offline.
-5. Fix lint and type errors before finishing.
+## State Rules
 
-## Authentication (OFFLINE ONLY)
-Do not build traditional cloud login screens. Authentication in this app means taking a live feature vector from the TFLite model and running a mathematical comparison against a local JSON list of pre-registered worker vectors.
+| State type | Where it lives |
+|---|---|
+| Auth / enrolled user | `authStore.ts` (Zustand + AsyncStorage) |
+| Sync queue status | `syncStore.ts` (Zustand + SQLite) |
+| Camera session (active, paused) | Local state inside screen component |
+| Liveness prompt step | Local state inside camera component |
+
+Do not use global state for transient UI state (animations, hover, step index).
+
+---
+
+## TypeScript Rules
+
+- Strict mode always on.
+- No `any`. Use `unknown` and narrow it.
+- All shared types go in `types/index.ts`.
+- Export types alongside functions in `lib/` files.
+- Keep types simple. Avoid deeply nested generics.
+
+---
+
+## Image Rules
+
+All image imports go through `constants/images.ts`.
+
+```ts
+// constants/images.ts
+import logo from '@/assets/images/logo.png';
+
+export const images = {
+  logo,
+};
+```
+
+Never import images directly inside screens or components.
+
+---
+
+## Secret Rules
+
+- AWS credentials never go in client-side code or `constants/`.
+- Use environment variables via `.env` and access via `process.env`.
+- `.env` is gitignored. `.env.example` is committed with placeholder values.
+- AWS calls go through `lib/syncService.ts` only. No direct AWS calls in screens or components.
+
+---
+
+## Coordination Rules (App Dev ↔ AI Model Team)
+
+- `lib/cameraInterface.ts` is the **only shared file**. Do not create other cross-boundary files.
+- App Dev provides: camera frame (base64), enrolled descriptor (number array).
+- AI Team returns: `FaceVerificationResult` or `EnrollmentResult`.
+- When App Dev needs to test UI before the model is ready, use the mock in `lib/cameraInterface.ts` — never mock inline in a screen.
+- If a function signature needs to change, both teams must agree before changes are committed.
+
+---
+
+## Decision Rules
+
+- Ask before installing any new library.
+- Ask before changing any cross-boundary interface (`cameraInterface.ts` signatures).
+- Ask before modifying the SQLite schema (adding/removing columns affects sync logic).
+- Do not refactor code that works unless explicitly asked.
+- Do not add features that were not requested in the current prompt.
+
+---
+
+## Communication Style
+
+Be concise. After implementing a feature, state:
+1. What files were changed.
+2. What the `// TODO: AI Team` touchpoints are (if any).
+3. How to test the feature manually.
+
+---
 
 ## Final Reminder
+
 Before every feature:
 - Read this file.
 - Follow it strictly.
-- Build clean, simple code.
-- Remember the core constraints: 100% Offline, <20MB Model, <1 Second Execution.
+- Keep the App Dev / AI Model boundary clean.
+- Leave `// TODO: AI Team` comments wherever model integration is expected.
+- Build clean, simple code a teammate can read at 2am before a deadline.
