@@ -29,20 +29,35 @@ This file governs the **App Dev** side only.
 
 ## Tech Stack
 
-| Layer | Library |
-|---|---|
-| Framework | Expo (React Native) |
-| Language | TypeScript (strict mode) |
-| Styling | NativeWind |
-| State | Zustand |
-| Persistence | AsyncStorage (`@react-native-async-storage/async-storage`) |
-| Camera | `expo-camera` |
-| Local DB | SQLite via `expo-sqlite` |
-| Navigation | Expo Router |
-| Network | `@react-native-community/netinfo` |
-| AWS Sync | AWS SDK (REST calls via `fetch`, no native SDK) |
+| Layer | Library | Reason |
+|---|---|---|
+| Framework | Expo SDK 51+ with **Expo Dev Client** | Managed workflow + custom native modules support |
+| Language | TypeScript (strict mode) | Team consistency, AI tooling accuracy |
+| Styling | NativeWind v4 | Tailwind syntax, excellent AI tooling support |
+| State | Zustand | Minimal API, zero boilerplate |
+| Fast Storage | `react-native-mmkv` | 30x faster than AsyncStorage, C++ native, no JS bridge |
+| Camera | `react-native-vision-camera` | Frame processors on native thread, sub-1s inference path |
+| Local DB | `expo-sqlite` with WAL mode | Relational attendance records, faster concurrent writes |
+| Navigation | Expo Router | File-based routing, Expo-native |
+| Network | `@react-native-community/netinfo` | Reactive online/offline detection |
+| Animations | `react-native-reanimated` v3 | UI-thread animations, liveness prompts never stutter |
+| Background Sync | `expo-background-fetch` + `expo-task-manager` | Sync fires even when app is backgrounded |
+| JS Engine | Hermes (verify enabled in app.json) | Bytecode compilation, faster startup, lower RAM |
+| AWS Sync | Native `fetch` (no AWS SDK) | Keeps bundle lean, plain REST to API Gateway |
+| UUID | `expo-crypto` | Local record ID generation |
 
-Do not introduce new major libraries without asking first. Prefer Expo-managed libraries when possible.
+> **Expo Dev Client is required** — not Expo Go. `react-native-mmkv`, `react-native-vision-camera`, and the AI team's TFLite module all need native build support. Initialize Dev Client on day one.
+
+```json
+// app.json — verify Hermes is on
+{
+  "expo": {
+    "jsEngine": "hermes"
+  }
+}
+```
+
+Do not introduce new major libraries without asking first. Every new dependency must justify why an existing library cannot handle the need.
 
 ---
 
@@ -61,33 +76,37 @@ Do not introduce new major libraries without asking first. Prefer Expo-managed l
 
 ```
 app/
-  (auth)/           # Login / biometric enrollment screens
-  (tabs)/           # Main nav tabs if applicable
-  index.tsx         # Entry point, redirects based on auth state
+  (auth)/               # Login / biometric enrollment screens
+  (tabs)/               # Main nav tabs if applicable
+  index.tsx             # Entry point, redirects based on auth state
 
 components/
-  camera/           # Camera preview, face overlay, liveness UI prompts
-  sync/             # Sync status badge, sync progress UI
-  common/           # Shared UI: buttons, cards, status indicators
+  camera/               # Vision Camera preview, face overlay, liveness UI prompts
+  sync/                 # Sync status badge, sync progress UI
+  common/               # Shared UI: buttons, cards, status indicators
 
 constants/
-  images.ts         # Centralized image imports
-  config.ts         # App-wide constants (timeouts, thresholds, endpoint URLs)
+  images.ts             # Centralized image imports
+  config.ts             # App-wide constants (timeouts, thresholds, endpoint URLs)
 
 hooks/
-  useNetworkStatus.ts   # Watches connectivity changes
-  useSyncQueue.ts       # Reads pending records and triggers sync
-  useCameraSession.ts   # Manages camera lifecycle
+  useNetworkStatus.ts   # Watches connectivity via netinfo
+  useSyncQueue.ts       # Reads pending records, triggers foreground sync
+  useCameraSession.ts   # Manages Vision Camera lifecycle and frame processor
 
 lib/
-  cameraInterface.ts    # THE BRIDGE: exports the function AI team will implement
+  cameraInterface.ts    # THE BRIDGE: exports functions AI team will implement
   syncService.ts        # AWS upload logic, purge logic
-  db.ts                 # SQLite helpers (read/write attendance records)
-  storage.ts            # AsyncStorage wrappers
+  db.ts                 # expo-sqlite helpers (WAL mode, read/write attendance records)
+  storage.ts            # MMKV wrappers for fast key-value reads/writes
+  backgroundSync.ts     # expo-background-fetch task definition and registration
 
 store/
-  authStore.ts          # Enrolled user identity, session state
-  syncStore.ts          # Pending records count, last sync timestamp, sync status
+  authStore.ts          # Enrolled user identity, face descriptor — persisted via MMKV
+  syncStore.ts          # Pending count, last sync timestamp, sync status — persisted via MMKV
+
+tasks/
+  syncTask.ts           # TaskManager task for background sync (registered once at app start)
 
 types/
   index.ts              # All shared TypeScript types in one place
@@ -100,6 +119,8 @@ assets/
 
 **Rule**: `lib/cameraInterface.ts` is the **only file the AI Team needs to touch** to plug in their model. App dev code calls this file's exported functions; it never calls model code directly.
 
+**Rule**: `lib/backgroundSync.ts` and `tasks/syncTask.ts` own all background sync logic. Do not duplicate sync logic in foreground hooks.
+
 ---
 
 ## The Camera–Model Bridge (`lib/cameraInterface.ts`)
@@ -108,76 +129,134 @@ This is the most important architectural boundary in the project.
 
 The App Dev team owns the **caller side**. The AI Model team owns the **implementation side**.
 
+Vision Camera is used for the camera layer. It runs frame processors on a dedicated **native thread**, separate from the JavaScript thread. This is what makes sub-1-second inference possible on mid-range devices.
+
+### Frame flow
+
+```
+Vision Camera (native thread)
+  → useFrameProcessor (worklet)
+    → verifyFaceFrame(frame)        ← AI Team implements this as a Frame Processor Plugin
+      → result passed back via shared value
+        → UI reacts via useAnimatedStyle (Reanimated, UI thread)
+```
+
 ### What app-dev code will call:
 
 ```ts
 // lib/cameraInterface.ts
 
+import { Frame } from 'react-native-vision-camera'
+
 export type FaceVerificationInput = {
-  frameData: string;        // base64 encoded camera frame
-  enrolledFaceDescriptor: number[]; // stored during enrollment
+  frame: Frame;                         // Vision Camera frame (native thread)
+  enrolledFaceDescriptor: number[];     // stored during enrollment, from MMKV
 };
 
 export type FaceVerificationResult = {
   isMatch: boolean;
   livenessConfirmed: boolean;
-  confidence: number;       // 0.0 – 1.0
+  confidence: number;                   // 0.0 – 1.0
+  livenessStep?: 'blink' | 'smile' | 'turn'; // current liveness challenge state
   error?: string;
 };
 
-// TODO: AI Team — implement this function using your TFLite model
-export async function verifyFace(
+// TODO: AI Team — implement as a Vision Camera Frame Processor Plugin
+// This runs on the native thread as a worklet. Do not use async/await here.
+export function verifyFaceFrame(
   input: FaceVerificationInput
-): Promise<FaceVerificationResult> {
-  // Placeholder — replace with real model inference
-  throw new Error('verifyFace() not yet implemented by AI Team');
+): FaceVerificationResult {
+  'worklet'
+  // Placeholder — replace with TFLite frame processor plugin
+  throw new Error('verifyFaceFrame() not yet implemented by AI Team');
 }
 
 export type EnrollmentInput = {
-  frameData: string;        // base64 encoded camera frame
+  frame: Frame;                         // single captured frame for enrollment
 };
 
 export type EnrollmentResult = {
-  faceDescriptor: number[]; // embedding to store for future verification
+  faceDescriptor: number[];             // embedding — store in MMKV via authStore
   error?: string;
 };
 
-// TODO: AI Team — implement this function for enrollment
-export async function enrollFace(
+// TODO: AI Team — implement enrollment frame processing
+export function enrollFaceFrame(
   input: EnrollmentInput
-): Promise<EnrollmentResult> {
-  throw new Error('enrollFace() not yet implemented by AI Team');
+): EnrollmentResult {
+  'worklet'
+  throw new Error('enrollFaceFrame() not yet implemented by AI Team');
 }
 ```
 
 **Do not change the function signatures without coordinating with both teams.**
 
+**Do not add async/await inside worklet functions** — Vision Camera frame processors are synchronous worklets running on the native thread.
+
 ---
 
 ## Local Data Model
 
-### AttendanceRecord (stored in SQLite)
+### AttendanceRecord (stored in expo-sqlite)
 
 ```ts
 type AttendanceRecord = {
-  id: string;               // UUID, generated locally
-  userId: string;           // enrolled user ID
-  timestamp: string;        // ISO 8601
-  confidence: number;       // from FaceVerificationResult
+  id: string;                 // UUID via expo-crypto, generated locally
+  userId: string;             // enrolled user ID
+  timestamp: string;          // ISO 8601
+  confidence: number;         // from FaceVerificationResult
   livenessConfirmed: boolean;
-  synced: boolean;          // false until successfully pushed to AWS
-  syncedAt?: string;        // ISO 8601, set after sync
+  synced: boolean;            // false until successfully pushed to AWS
+  syncedAt?: string;          // ISO 8601, set after confirmed sync
 };
 ```
 
+### SQLite setup — WAL mode (required, set once on DB open)
+
+```ts
+// lib/db.ts
+const db = await SQLite.openDatabaseAsync('datalake.db')
+await db.execAsync('PRAGMA journal_mode = WAL')
+await db.execAsync('PRAGMA synchronous = NORMAL')
+```
+
+Never open the database without these two pragmas. WAL mode allows concurrent reads during writes and is significantly faster on mid-range flash storage.
+
+### MMKV storage — for Zustand persistence and fast key-value reads
+
+```ts
+// lib/storage.ts
+import { MMKV } from 'react-native-mmkv'
+
+export const storage = new MMKV()
+
+export const mmkvStorage = {
+  getItem: (key: string) => storage.getString(key) ?? null,
+  setItem: (key: string, value: string) => storage.set(key, value),
+  removeItem: (key: string) => storage.delete(key),
+}
+```
+
+Use MMKV for: Zustand store persistence, enrolled face descriptor, auth state, sync metadata.
+Use SQLite for: AttendanceRecord table — anything that needs queries, filtering, or bulk operations.
+
 ### Sync/Purge Flow
 
-1. After successful face verification, write an `AttendanceRecord` with `synced: false` to SQLite.
+**Foreground sync** (app is open):
+1. After successful face verification, write `AttendanceRecord` with `synced: false` to SQLite.
 2. `useSyncQueue` hook watches network status via `useNetworkStatus`.
-3. When connectivity is restored, `syncService.ts` picks up all records where `synced = false`.
-4. Each record is uploaded to AWS via REST. On success, mark `synced = true` and set `syncedAt`.
-5. Purge: after all records in a batch are confirmed synced, delete them from SQLite. Never purge unsynced records.
-6. Sync state (pending count, last sync time, in-progress flag) lives in `syncStore.ts`.
+3. On connectivity restored → `syncService.ts` queries `WHERE synced = 0`.
+4. Upload each record to AWS via `fetch`. On HTTP 200 → mark `synced = true`, set `syncedAt`.
+5. After full batch confirmed → delete synced records from SQLite (purge).
+6. Update `syncStore` with new pending count and last sync timestamp.
+
+**Background sync** (app is backgrounded or closed):
+1. `tasks/syncTask.ts` is registered once at app startup via `expo-task-manager`.
+2. `expo-background-fetch` wakes the task periodically (OS-determined interval).
+3. Task checks: network available AND unsynced records exist → runs same sync logic as foreground.
+4. Returns `BackgroundFetchResult.NewData` if records were synced, `NoData` otherwise.
+
+**Purge rule — never violate this**: Delete a record from SQLite only after AWS returns HTTP 200 for that specific record. Never purge on timeout, never purge optimistically.
 
 ---
 
@@ -197,27 +276,45 @@ type AttendanceRecord = {
 
 Use NativeWind classes everywhere possible. Do not use `StyleSheet` unless listed below.
 
-### StyleSheet exceptions (use inline style or StyleSheet here):
+### StyleSheet / inline style exceptions:
 
 - `SafeAreaView`
 - `Modal`
-- `Animated.View`
+- `Animated.View` (legacy — prefer Reanimated's `Animated.View` instead)
 - `KeyboardAvoidingView`
 - Platform-specific shadow styles
-- Dynamic styles computed at runtime (e.g., progress bar width)
+- Dynamic styles computed at runtime (e.g., progress bar width as a percentage)
+
+### Animation rule — always use Reanimated, never the legacy Animated API
+
+All animations must use `react-native-reanimated` v3. This keeps animations on the UI thread and prevents stutter when the JS thread is busy processing camera frames or running sync logic.
+
+```ts
+// Correct — Reanimated, runs on UI thread
+import Animated, { useSharedValue, useAnimatedStyle, withTiming } from 'react-native-reanimated'
+
+// Wrong — legacy API, runs on JS thread, will stutter during model inference
+import { Animated } from 'react-native'
+```
+
+Liveness prompt animations (blink indicator, turn arrow, smile icon) must all use Reanimated.
 
 ---
 
 ## State Rules
 
-| State type | Where it lives |
-|---|---|
-| Auth / enrolled user | `authStore.ts` (Zustand + AsyncStorage) |
-| Sync queue status | `syncStore.ts` (Zustand + SQLite) |
-| Camera session (active, paused) | Local state inside screen component |
-| Liveness prompt step | Local state inside camera component |
+| State type | Where it lives | Persistence |
+|---|---|---|
+| Auth / enrolled user / face descriptor | `authStore.ts` (Zustand) | MMKV via `mmkvStorage` |
+| Sync queue status, last sync time | `syncStore.ts` (Zustand) | MMKV via `mmkvStorage` |
+| Attendance records | `expo-sqlite` (via `lib/db.ts`) | SQLite WAL |
+| Camera session (active, paused) | Local `useState` in screen | None |
+| Liveness prompt step | Local `useState` in camera component | None |
+| Animation values | Reanimated `useSharedValue` | None |
 
-Do not use global state for transient UI state (animations, hover, step index).
+Do not use global Zustand state for transient UI state (animations, step index, button press state).
+
+Do not use MMKV directly inside components or screens — always go through `lib/storage.ts` wrappers or Zustand store actions.
 
 ---
 
@@ -260,14 +357,41 @@ Never import images directly inside screens or components.
 ## Coordination Rules (App Dev ↔ AI Model Team)
 
 - `lib/cameraInterface.ts` is the **only shared file**. Do not create other cross-boundary files.
-- App Dev provides: camera frame (base64), enrolled descriptor (number array).
-- AI Team returns: `FaceVerificationResult` or `EnrollmentResult`.
-- When App Dev needs to test UI before the model is ready, use the mock in `lib/cameraInterface.ts` — never mock inline in a screen.
-- If a function signature needs to change, both teams must agree before changes are committed.
+- App Dev provides: Vision Camera `Frame` object + enrolled descriptor (`number[]` from MMKV).
+- AI Team returns: `FaceVerificationResult` or `EnrollmentResult` — synchronously, as a worklet.
+- The AI team's TFLite plugin must be a **Vision Camera Frame Processor Plugin** — this is the only architecture that meets the <1 second requirement on mid-range devices.
+- When App Dev needs to test UI before the model is ready, use a **mock implementation in `lib/cameraInterface.ts`** that returns a fake result after 300ms. Never mock inline in a screen.
+- If a function signature needs to change, both teams must agree and update `types/index.ts` together before any code changes.
+- The AI team should not modify any file outside `lib/cameraInterface.ts` without prior discussion.
 
 ---
 
-## Decision Rules
+## Performance Rules
+
+These are non-negotiable given the <1 second recognition requirement and mid-range device target.
+
+**JS thread protection** — the JS thread must never be blocked during camera operation. Camera frame processing (Vision Camera worklets) runs on the native thread. Sync operations run in the background. Animations run on the UI thread via Reanimated. None of these should ever touch the JS thread during active face verification.
+
+**No synchronous SQLite reads on the camera screen** — do not query SQLite while the camera frame processor is active. Load what you need before the camera starts, store it in memory or a Zustand store.
+
+**Face descriptor in MMKV, not SQLite** — the enrolled face descriptor (number array) must be loaded from MMKV into memory when the camera screen mounts. Do not read it from SQLite mid-session.
+
+**Batch SQLite writes** — when writing attendance records, use a transaction. Never write records one by one in a loop.
+
+```ts
+// Correct
+await db.withTransactionAsync(async () => {
+  for (const record of records) {
+    await db.runAsync('INSERT INTO attendance ...', [...])
+  }
+})
+```
+
+**Verify Hermes is enabled** — check `app.json` has `"jsEngine": "hermes"` before every build. Hermes reduces startup time and memory usage on low-end devices.
+
+---
+
+
 
 - Ask before installing any new library.
 - Ask before changing any cross-boundary interface (`cameraInterface.ts` signatures).
