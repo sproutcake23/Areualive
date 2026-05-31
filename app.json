@@ -9,7 +9,13 @@
     "userInterfaceStyle": "automatic",
     "newArchEnabled": true,
     "ios": {
-      "supportsTablet": true
+      "supportsTablet": true,
+      "infoPlist": {
+        "UIBackgroundModes": [
+          "fetch",
+          "processing"
+        ]
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -38,6 +44,13 @@
           "dark": {
             "backgroundColor": "#000000"
           }
+        }
+      ],
+      "expo-sqlite",
+      [
+        "react-native-vision-camera",
+        {
+          "cameraPermissionText": "Datalake needs camera access to verify your identity."
         }
       ]
     ],
