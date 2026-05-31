@@ -65,5 +65,13 @@ npm run reset-project
 > **Note:** This command will move the starter code into an `app-example` directory and generate a completely blank `app` directory for you to work in.
 
 ---
-
+### Proposed App interface (Suggest changes)
+1. User Registration interface
+    ![[Gemini_Generated_Image_fktaw6fktaw6fkta.png|237]]
+2. User registration scan
+ ![[Gemini_Generated_Image_b8nx2db8nx2db8nx.png|265]]
+3. User face scan tab
+    ![[Gemini_Generated_Image_rwvgayrwvgayrwvg.png|254]]
+4. User face recognition and liveliness check
+    ![[Gemini_Generated_Image_k2u3u5k2u3u5k2u3.png|316]]
 This readme is for fellow developers for app dev
