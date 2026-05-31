@@ -1,50 +1,69 @@
-# Welcome to your Expo app 👋
+# 📱 Areualive (Development Phase)
 
-This is an [Expo](https://expo.dev) project created with [`create-expo-app`](https://www.npmjs.com/package/create-expo-app).
+Welcome to the development repository for **Areualive**. This is an [Expo](https://expo.dev) project created with `create-expo-app`, currently configured to use a custom development build for physical Android devices.
 
-## Get started
+Follow the steps below to set up your local environment and run the app on your phone.
 
-1. Install dependencies
+---
 
-   ```bash
-   npm install
-   ```
+## 🚀 Getting Started
 
-2. Start the app
+### 1. Install Dependencies
 
-   ```bash
-   npx expo start
-   ```
+Clone the repository and install the necessary Node modules:
 
-In the output, you'll find options to open the app in a
+```bash
+npm install
+```
 
-- [development build](https://docs.expo.dev/develop/development-builds/introduction/)
-- [Android emulator](https://docs.expo.dev/workflow/android-studio-emulator/)
-- [iOS simulator](https://docs.expo.dev/workflow/ios-simulator/)
-- [Expo Go](https://expo.dev/go), a limited sandbox for trying out app development with Expo
+### 2. Install the Expo Dev Client
 
-You can start developing by editing the files inside the **app** directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+Because this project utilizes custom native code configurations, we need the development client library to load our JavaScript updates. Run this in the project root:
 
-## Get a fresh project
+```bash
+npx expo install expo-dev-client
+```
 
-When you're ready, run:
+### 3. Enable USB Debugging on Your Device
+
+By default, Android only allows apps from Google Play. To install our local development build, you must enable USB Debugging on your physical device:
+
+1. Go to **Settings → About phone → Software information**
+2. Tap the **Build number** row at the bottom **7 times** to unlock Developer Options
+3. Go back to **Settings → Developer options** and toggle on **USB debugging**
+
+### 4. Connect and Verify ADB
+
+Plug your Android device into your computer via USB. Verify that the Android Debug Bridge (ADB) recognizes your device by running:
+
+```bash
+adb devices
+```
+
+> **Expected output:** You should see your device's ID with the word `device` next to it (e.g., `8AHX0T32K device`). If a prompt appears on your phone asking to **"Allow USB debugging"**, tap **Allow**.
+
+### 5. Run the Application
+
+Compile the native Android app and install it directly onto your connected device:
+
+```bash
+npx expo run:android
+```
+
+Once the installation finishes, you can start developing by editing the files inside the `app` directory. This project uses [file-based routing](https://docs.expo.dev/router/introduction).
+
+---
+
+## 🧹 Get a Fresh Project
+
+If you want to clear out the default boilerplate code and start from scratch, run:
 
 ```bash
 npm run reset-project
 ```
 
-This command will move the starter code to the **app-example** directory and create a blank **app** directory where you can start developing.
+> **Note:** This command will move the starter code into an `app-example` directory and generate a completely blank `app` directory for you to work in.
 
-## Learn more
+---
 
-To learn more about developing your project with Expo, look at the following resources:
-
-- [Expo documentation](https://docs.expo.dev/): Learn fundamentals, or go into advanced topics with our [guides](https://docs.expo.dev/guides).
-- [Learn Expo tutorial](https://docs.expo.dev/tutorial/introduction/): Follow a step-by-step tutorial where you'll create a project that runs on Android, iOS, and the web.
-
-## Join the community
-
-Join our community of developers creating universal apps.
-
-- [Expo on GitHub](https://github.com/expo/expo): View our open source platform and contribute.
-- [Discord community](https://chat.expo.dev): Chat with Expo users and ask questions.
+This readme is for fellow developers for app dev
