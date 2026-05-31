@@ -65,13 +65,19 @@ npm run reset-project
 > **Note:** This command will move the starter code into an `app-example` directory and generate a completely blank `app` directory for you to work in.
 
 ---
-### Proposed App interface (Suggest changes)
-1. User Registration interface
-    ![[Gemini_Generated_Image_fktaw6fktaw6fkta.png|237]]
-2. User registration scan
- ![[Gemini_Generated_Image_b8nx2db8nx2db8nx.png|265]]
-3. User face scan tab
-    ![[Gemini_Generated_Image_rwvgayrwvgayrwvg.png|254]]
-4. User face recognition and liveliness check
-    ![[Gemini_Generated_Image_k2u3u5k2u3u5k2u3.png|316]]
+### Proposed App Interface
+
+1. **User Registration interface**<br>
+   <img src="https://github.com/user-attachments/assets/bda1760b-18a3-4752-ba41-107b31c58d22" width="250" alt="User Registration interface" />
+
+2. **User registration scan**<br>
+   <img src="https://github.com/user-attachments/assets/6e47afc7-49ae-4ce3-b273-f5ad64085825" width="250" alt="User registration scan" />
+
+3. **User face scan tab**<br>
+   <img src="https://github.com/user-attachments/assets/e7a6329e-bc15-4642-a6a6-f79833cf2b70" width="250" alt="User face scan tab" />
+
+4. **User face recognition and liveliness check**<br>
+   <img src="https://github.com/user-attachments/assets/29ad1e9a-da25-42ee-b1b2-edc4c2885173" width="250" alt="User face recognition and liveliness check" />
+
+ 
 This readme is for fellow developers for app dev
