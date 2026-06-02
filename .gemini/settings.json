@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "expo": {
+      "command": "https://mcp.expo.dev/mcp",
+      "args": []
+    }
+  }
+}

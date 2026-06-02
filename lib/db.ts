@@ -6,28 +6,34 @@ import * as SQLite from "expo-sqlite";
 import type { AttendanceRecord } from "@/types";
 
 let dbInstance: SQLite.SQLiteDatabase | null = null;
+let dbPromise: Promise<SQLite.SQLiteDatabase> | null = null;
 
 // Opens (once) and returns the shared database handle.
 export async function getDatabase(): Promise<SQLite.SQLiteDatabase> {
   if (dbInstance) return dbInstance;
+  if (dbPromise) return dbPromise;
 
-  const db = await SQLite.openDatabaseAsync("datalake.db");
-  await db.execAsync("PRAGMA journal_mode = WAL");
-  await db.execAsync("PRAGMA synchronous = NORMAL");
-  await db.execAsync(`
-    CREATE TABLE IF NOT EXISTS attendance (
-      id TEXT PRIMARY KEY NOT NULL,
-      userId TEXT NOT NULL,
-      timestamp TEXT NOT NULL,
-      confidence REAL NOT NULL,
-      livenessConfirmed INTEGER NOT NULL,
-      synced INTEGER NOT NULL DEFAULT 0,
-      syncedAt TEXT
-    );
-  `);
+  dbPromise = (async () => {
+    const db = await SQLite.openDatabaseAsync("datalake.db");
+    await db.execAsync("PRAGMA journal_mode = WAL");
+    await db.execAsync("PRAGMA synchronous = NORMAL");
+    await db.execAsync(`
+      CREATE TABLE IF NOT EXISTS attendance (
+        id TEXT PRIMARY KEY NOT NULL,
+        userId TEXT NOT NULL,
+        timestamp TEXT NOT NULL,
+        confidence REAL NOT NULL,
+        livenessConfirmed INTEGER NOT NULL,
+        synced INTEGER NOT NULL DEFAULT 0,
+        syncedAt TEXT
+      );
+    `);
 
-  dbInstance = db;
-  return db;
+    dbInstance = db;
+    return db;
+  })();
+
+  return dbPromise;
 }
 
 type AttendanceRow = {
