@@ -357,6 +357,57 @@ export type EnrollmentResult = {
   error?: string;
 };
 
+function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, height: number): string {
+  "worklet";
+  
+  const padding = (4 - ((width * 3) % 4)) % 4;
+  const pixelDataSize = (width * 3 + padding) * height;
+  const fileSize = 54 + pixelDataSize;
+
+  const buffer = new ArrayBuffer(fileSize);
+  const view = new DataView(buffer);
+
+  // --- WRITE BMP HEADER ---
+  view.setUint8(0, 0x42); view.setUint8(1, 0x4D); // 'BM'
+  view.setUint32(2, fileSize, true);
+  view.setUint32(10, 54, true);
+  view.setUint32(14, 40, true);
+  view.setUint32(18, width, true);
+  view.setUint32(22, -height, true); // Keep top-to-bottom orientation sharp
+  view.setUint16(26, 1, true);
+  view.setUint16(28, 24, true); // 24-bit RGB
+  view.setUint32(34, pixelDataSize, true);
+
+  const bmpBytes = new Uint8Array(buffer, 54);
+  let srcIdx = 0;
+  let dstIdx = 0;
+
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      // 🎯 Reverse normalization math: Convert (-1.0 -> 1.0) back to (0 -> 255)
+      let r = Math.max(0, Math.min(255, Math.floor(floatArray[srcIdx] * 128.0 + 127.5)));
+      let g = Math.max(0, Math.min(255, Math.floor(floatArray[srcIdx + 1] * 128.0 + 127.5)));
+      let b = Math.max(0, Math.min(255, Math.floor(floatArray[srcIdx + 2] * 128.0 + 127.5)));
+
+      // BMP expects channels in BGR layout
+      bmpBytes[dstIdx]     = b; 
+      bmpBytes[dstIdx + 1] = g; 
+      bmpBytes[dstIdx + 2] = r; 
+      
+      srcIdx += 3;
+      dstIdx += 3;
+    }
+    dstIdx += padding;
+  }
+
+  // Convert binary array workspace to a base64 string
+  let binary = "";
+  const totalBytes = new Uint8Array(buffer);
+  for (let i = 0; i < totalBytes.length; i++) {
+    binary += String.fromCharCode(totalBytes[i]);
+  }
+  return `data:image/bmp;base64,${btoa(binary)}`;
+}
 // =============================================================================
 // ⚡ INTERNAL NATIVE MATH HEURISTICS (Worklet Validated)
 // =============================================================================
@@ -541,12 +592,16 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
     });
     console.log("   └─ Allocated Buffer Bytes:", croppedFaceNetBuffer.buffer.byteLength); // Verify sequence space (37632 bytes)
 
+    
+
+
     console.log("🧠 [Inference 2/2] Extracting Face Vector via Synchronous MobileFaceNet...");
     const mobileFaceModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
     const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
     for (let i = 0; i < faceNetFloatArray.length; i++) {
       faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
     }
+    const visualCropUri = convertFloatArrayToBmpUri(faceNetFloatArray, 112, 112);
     const embeddingOutput = mobileFaceModel.runSync([faceNetFloatArray.buffer]);
 
 
@@ -568,7 +623,7 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
       livenessConfirmed: true,
       confidence: similarityScore,
       livenessStep: currentChallenge,
-      diagonise: croppedFaceNetBuffer,
+      diagonise: visualCropUri,
     };
 
   } catch (err: any) {

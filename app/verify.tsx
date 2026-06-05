@@ -100,16 +100,27 @@ export default function Verify() {
   }, [step]);
 
   // JS Thread Callback: Invoked dynamically when the C++ worker passes the model criteria
+  // const handleVerificationSuccess = useRunOnJS((result: any) => {
+  //   // This blocks runs perfectly safe directly on your main UI state machine
+  //   console.log("🏆 [UI Thread] Match confirmed! Shutting down engine & navigating...");
+  //   setOutcome("success");
+  //   router.replace("/verify");
+  // }, [user]);
+
   const handleVerificationSuccess = useRunOnJS((result: any) => {
-    // This blocks runs perfectly safe directly on your main UI state machine
-    console.log("🏆 [UI Thread] Match confirmed! Shutting down engine & navigating...");
+    console.log("🏆 Match confirmed!");
+    if (result.diagonise) {
+      setCroppedPreview(result.diagonise); // Set preview image path
+    }
     setOutcome("success");
-    router.replace("/verify");
   }, [user]);
+
+
 
   const handleVerificationFailure = useRunOnJS((errorMessage: string) => {
     console.log("❌ [UI Thread] Verification halted:", errorMessage);
     setErrorDetails(errorMessage);
+    
     setOutcome("failed");
     alert(`Verification Failed: ${errorMessage}`);
 
@@ -174,11 +185,17 @@ export default function Verify() {
         // Keep the lane locked (isCheckingFrame = true) so no new frames process 
         // while the screen transitions!
       } else if (result.error) {
+          if (result.diagonise) {
+            setCroppedPreview(result.diagonise); // Set preview image path
+          }
         console.log("❌ C++ Thread Error! Teleporting to Failure Handler...");
         
         isCheckingFrame.value = false; // Unlock the lane so they can attempt again
         handleVerificationFailure(result.error);
       } else {
+          if (result.diagonise) {
+            setCroppedPreview(result.diagonise); // Set preview image path
+          }
         // The frame just didn't pass the challenge criteria yet (e.g., waiting for a blink).
         // Safely unlock the lane to let the next video frame stream through.
         isCheckingFrame.value = false; 
@@ -210,6 +227,25 @@ export default function Verify() {
         />
           <FaceOverlay />
         </View>
+
+        {croppedPreview && (
+          <View className="absolute top-36 right-6 z-50 border-2 border-amber-400 rounded-2xl overflow-hidden shadow-2xl bg-slate-900 p-2">
+            <Text className="text-[10px] text-amber-400 font-bold text-center mb-1">WHAT THE MODEL SEES</Text>
+            
+            {/* 🎯 FIX: Cast Image to any to bypass the missing props definition */}
+            {(() => {
+              const DebugImage = require("react-native").Image as any;
+              return (
+                <DebugImage 
+                  source={{ uri: croppedPreview }} 
+                  className="w-28 h-28 rounded-xl bg-black"
+                  resizeMode="contain"
+                />
+              );
+            })()}
+
+          </View>
+        )}
 
         {/* Top Back Action Arrow Header */}
         <View 
