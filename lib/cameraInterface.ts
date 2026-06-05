@@ -358,7 +358,7 @@ export type EnrollmentResult = {
 };
 
 function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, height: number): string {
-  "worklet";
+  "worklet"; // 🔥 Enforces that this entire function runs on the C++ thread
   
   const padding = (4 - ((width * 3) % 4)) % 4;
   const pixelDataSize = (width * 3 + padding) * height;
@@ -373,9 +373,9 @@ function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, heig
   view.setUint32(10, 54, true);
   view.setUint32(14, 40, true);
   view.setUint32(18, width, true);
-  view.setUint32(22, -height, true); // Keep top-to-bottom orientation sharp
+  view.setUint32(22, -height, true); 
   view.setUint16(26, 1, true);
-  view.setUint16(28, 24, true); // 24-bit RGB
+  view.setUint16(28, 24, true); 
   view.setUint32(34, pixelDataSize, true);
 
   const bmpBytes = new Uint8Array(buffer, 54);
@@ -384,12 +384,10 @@ function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, heig
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      // 🎯 Reverse normalization math: Convert (-1.0 -> 1.0) back to (0 -> 255)
       let r = Math.max(0, Math.min(255, Math.floor(floatArray[srcIdx] * 128.0 + 127.5)));
       let g = Math.max(0, Math.min(255, Math.floor(floatArray[srcIdx + 1] * 128.0 + 127.5)));
       let b = Math.max(0, Math.min(255, Math.floor(floatArray[srcIdx + 2] * 128.0 + 127.5)));
 
-      // BMP expects channels in BGR layout
       bmpBytes[dstIdx]     = b; 
       bmpBytes[dstIdx + 1] = g; 
       bmpBytes[dstIdx + 2] = r; 
@@ -400,13 +398,28 @@ function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, heig
     dstIdx += padding;
   }
 
-  // Convert binary array workspace to a base64 string
-  let binary = "";
+  // 🎯 THE WORKLET FIX: Pure JavaScript Base64 lookup engine (No global btoa required!)
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   const totalBytes = new Uint8Array(buffer);
-  for (let i = 0; i < totalBytes.length; i++) {
-    binary += String.fromCharCode(totalBytes[i]);
+  let base64String = "";
+  let i = 0;
+
+  while (i < totalBytes.length) {
+    const byte1 = totalBytes[i++];
+    const byte2 = i < totalBytes.length ? totalBytes[i++] : NaN;
+    const byte3 = i < totalBytes.length ? totalBytes[i++] : NaN;
+
+    const enc1 = byte1 >> 2;
+    const enc2 = ((byte1 & 3) << 4) | (isNaN(byte2) ? 0 : byte2 >> 4);
+    const enc3 = isNaN(byte2) ? 64 : ((byte2 & 15) << 2) | (isNaN(byte3) ? 0 : byte3 >> 6);
+    const enc4 = isNaN(byte3) ? 64 : byte3 & 63;
+
+    base64String += chars.charAt(enc1) + chars.charAt(enc2) +
+                    (enc3 === 64 ? "=" : chars.charAt(enc3)) +
+                    (enc4 === 64 ? "=" : chars.charAt(enc4));
   }
-  return `data:image/bmp;base64,${btoa(binary)}`;
+
+  return `data:image/bmp;base64,${base64String}`;
 }
 // =============================================================================
 // ⚡ INTERNAL NATIVE MATH HEURISTICS (Worklet Validated)
