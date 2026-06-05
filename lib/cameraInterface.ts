@@ -435,14 +435,28 @@ function calculateEAR(p1: any, p2: any, p3: any, p4: any, p5: any, p6: any): num
 
   function calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
     "worklet";
+    if (!vecA || !vecB || vecA.length === 0 || vecB.length === 0) return 0;
+    
+    // 🎯 FIX: Prevent NaN crashing if comparing a real 192D model output against a stale 128D mock from MMKV
+    const minLength = Math.min(vecA.length, vecB.length);
+    if (vecA.length !== vecB.length) {
+      console.log(`⚠️ [Vector Mismatch] Comparing a ${vecA.length}D array against a ${vecB.length}D array. Are you using a stale mock enrollment?`);
+    }
+
     let dotProduct = 0.0;
     let normA = 0.0;
     let normB = 0.0;
-    for (let i = 0; i < vecA.length; i++) {
-      dotProduct += vecA[i] * vecB[i];
-      normA += vecA[i] * vecA[i];
-      normB += vecB[i] * vecB[i];
+    
+    for (let i = 0; i < minLength; i++) {
+      // Safety check to ensure we are multiplying valid numbers, preventing NaN propagation
+      const a = vecA[i] || 0;
+      const b = vecB[i] || 0;
+      
+      dotProduct += a * b;
+      normA += a * a;
+      normB += b * b;
     }
+    
     if (normA === 0 || normB === 0) return 0;
     return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
@@ -564,10 +578,35 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
       return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "Invalid face bounds" };
     }
 
-    const x = bounding.x;
-    const y = bounding.y;
-    const width = bounding.width;
-    const height = bounding.height;
+    let cropX = bounding.x;
+    let cropY = bounding.y;
+    let cropWidth = bounding.width;
+    let cropHeight = bounding.height;
+
+    // 🎯 FIX: Coordinate Alignment & Scaling Space
+    // MLKit often returns bounding boxes relative to a Portrait view (e.g. 1080x1920).
+    // The raw camera frame buffer is typically Landscape on Android (e.g. 1920x1080).
+    console.log(`📏 [Scale Check] Raw Frame: ${frame.width}x${frame.height}. Original Bounds: x=${cropX.toFixed(1)}, y=${cropY.toFixed(1)}, w=${cropWidth.toFixed(1)}, h=${cropHeight.toFixed(1)}`);
+
+    // If the frame is Landscape but the bounds exceed the frame's height, they are likely swapped.
+    if (frame.width > frame.height && (cropY + cropHeight > frame.height)) {
+      console.log("🔄 [Coordinate Mapper] Swapping axes to align Portrait MLKit bounds with Landscape Sensor buffer.");
+      cropX = bounding.y;
+      cropY = bounding.x;
+      cropWidth = bounding.height;
+      cropHeight = bounding.width;
+
+      // Handle front camera mirroring (if X needs to be flipped on the Landscape axis)
+      // Uncomment below if the thumbnail is cropping the opposite side of the screen
+      // cropY = frame.height - (bounding.x + bounding.width);
+    }
+
+    // 🎯 CLAMPING: Prevent C++ native crashes from out-of-bounds crop areas
+    cropX = Math.max(0, cropX);
+    cropY = Math.max(0, cropY);
+    cropWidth = Math.min(cropWidth, frame.width - cropX);
+    cropHeight = Math.min(cropHeight, frame.height - cropY);
+    console.log(`✂️ [Final Crop Coordinates] x=${cropX.toFixed(1)}, y=${cropY.toFixed(1)}, w=${cropWidth.toFixed(1)}, h=${cropHeight.toFixed(1)}`);
         
     // // ✂️ STEP 3: RESIZE FOR MINIFASNET ANTI-SPOOFING (80x80)
     // console.log("✂️ [Crop 1/2] Resizing target frame region to 112x112 for Anti-Spoofing...");
@@ -599,20 +638,21 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
     console.log("✂️ [Crop 2/2] Resizing target frame region to 112x112 for Vector Generation...");
     const croppedFaceNetBuffer = resizePlugin(frame, {
       scale: { width: 112, height: 112 },
-      crop: { x, y, width, height },
+      crop: { x: cropX, y: cropY, width: cropWidth, height: cropHeight },
       pixelFormat: 'rgb',
-      dataType: 'float32'
+      dataType: 'uint8'
     });
     console.log("   └─ Allocated Buffer Bytes:", croppedFaceNetBuffer.buffer.byteLength); // Verify sequence space (37632 bytes)
 
-    
-
-
     console.log("🧠 [Inference 2/2] Extracting Face Vector via Synchronous MobileFaceNet...");
     const mobileFaceModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
-    const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
-    for (let i = 0; i < faceNetFloatArray.length; i++) {
-      faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
+    
+    // 🎯 FIX: Correctly unpack the uint8 bytes BEFORE casting to Float32. 
+    // Directly casting an ArrayBuffer to Float32Array interprets 4 pixels as 1 junk memory float!
+    const uint8Image = new Uint8Array(croppedFaceNetBuffer.buffer);
+    const faceNetFloatArray = new Float32Array(uint8Image.length);
+    for (let i = 0; i < uint8Image.length; i++) {
+      faceNetFloatArray[i] = (uint8Image[i] - 127.5) / 128.0;    
     }
     const visualCropUri = convertFloatArrayToBmpUri(faceNetFloatArray, 112, 112);
     const embeddingOutput = mobileFaceModel.runSync([faceNetFloatArray.buffer]);
@@ -677,20 +717,43 @@ export function enrollFaceFrame(input: EnrollmentInput) {
     }
 
     const bounding = faces[0].bounds;
+    let cropX = bounding.x;
+    let cropY = bounding.y;
+    let cropWidth = bounding.width;
+    let cropHeight = bounding.height;
+
+    console.log(`📏 [Enroll Scale Check] Raw Frame: ${frame.width}x${frame.height}. Original Bounds: x=${cropX.toFixed(1)}, y=${cropY.toFixed(1)}, w=${cropWidth.toFixed(1)}, h=${cropHeight.toFixed(1)}`);
+
+    if (frame.width > frame.height && (cropY + cropHeight > frame.height)) {
+      console.log("🔄 [Enroll Coordinate Mapper] Swapping axes to align Portrait MLKit bounds with Landscape Sensor buffer.");
+      cropX = bounding.y;
+      cropY = bounding.x;
+      cropWidth = bounding.height;
+      cropHeight = bounding.width;
+    }
+
+    cropX = Math.max(0, cropX);
+    cropY = Math.max(0, cropY);
+    cropWidth = Math.min(cropWidth, frame.width - cropX);
+    cropHeight = Math.min(cropHeight, frame.height - cropY);
+
     console.log("✂️ [Crop Pass] Found face bounds. Commencing 112x112 image downsampling matrix extraction...");
 
     const croppedFaceNetBuffer = resizePlugin(frame, {
       scale: { width: 112, height: 112 },
-      crop: { x: bounding.x, y: bounding.y, width: bounding.width, height: bounding.height },
+      crop: { x: cropX, y: cropY, width: cropWidth, height: cropHeight },
       pixelFormat: 'rgb',
-      dataType: 'float32'
+      dataType: 'uint8'
     });
 
     console.log("🧠 [Inference Pass] Feeding raw buffer elements into MobileFaceNet sync matrix execution...");
     const activeModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
-    const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
-    for (let i = 0; i < faceNetFloatArray.length; i++) {
-      faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
+    
+    // 🎯 FIX: Extract as uint8 first, then normalize to a new Float32Array
+    const uint8Image = new Uint8Array(croppedFaceNetBuffer.buffer);
+    const faceNetFloatArray = new Float32Array(uint8Image.length);
+    for (let i = 0; i < uint8Image.length; i++) {
+      faceNetFloatArray[i] = (uint8Image[i] - 127.5) / 128.0;    
     }
     const embeddingOutput = activeModel.runSync([faceNetFloatArray.buffer]);
     

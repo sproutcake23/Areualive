@@ -126,6 +126,10 @@ export default function Verify() {
 
   }, []);
 
+  const handleDebugPreview = useRunOnJS((uri: string) => {
+    setCroppedPreview(uri);
+  }, []);
+
   const onVerify = () => {
     console.log("🔘 Button physically tapped. Checking criteria:", {
       hasFaceDescriptor: !!faceDescriptor,
@@ -186,7 +190,7 @@ export default function Verify() {
         // while the screen transitions!
       } else if (result.error) {
           if (result.diagonise) {
-            setCroppedPreview(result.diagonise); // Set preview image path
+            handleDebugPreview(result.diagonise); // 🎯 FIX: Call via UI thread handler
           }
         console.log("❌ C++ Thread Error! Teleporting to Failure Handler...");
         
@@ -194,7 +198,7 @@ export default function Verify() {
         handleVerificationFailure(result.error);
       } else {
           if (result.diagonise) {
-            setCroppedPreview(result.diagonise); // Set preview image path
+            handleDebugPreview(result.diagonise); // 🎯 FIX: Call via UI thread handler
           }
         // The frame just didn't pass the challenge criteria yet (e.g., waiting for a blink).
         // Safely unlock the lane to let the next video frame stream through.
@@ -210,7 +214,7 @@ export default function Verify() {
     }
 
     // 🎯 CRITICAL: Add your JS handlers to the dependency array so the worklet can reference them!
-  }, [faceDescriptor, boxedAntiSpoofModel, boxedMobileFaceModel, isCheckingFrame, activeChallenge, resize, detectFaces, handleVerificationSuccess, handleVerificationFailure]);    
+  }, [faceDescriptor, boxedAntiSpoofModel, boxedMobileFaceModel, isCheckingFrame, activeChallenge, resize, detectFaces, handleVerificationSuccess, handleVerificationFailure, handleDebugPreview]);    
 
 
   return (
