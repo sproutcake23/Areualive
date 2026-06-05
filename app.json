@@ -13,9 +13,13 @@
       "infoPlist": {
         "UIBackgroundModes": [
           "fetch",
+          "processing",
+          "fetch",
           "processing"
-        ]
-      }
+        ],
+        "NSCameraUsageDescription": "Datalake needs camera access to verify your identity."
+      },
+      "bundleIdentifier": "com.anonymous.Areualive"
     },
     "android": {
       "adaptiveIcon": {
@@ -26,7 +30,11 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.anonymous.Areualive"
+      "minSdkVersion": 26,
+      "package": "com.anonymous.Areualive",
+      "permissions": [
+        "android.permission.CAMERA"
+      ]
     },
     "web": {
       "output": "static",
@@ -34,6 +42,14 @@
     },
     "plugins": [
       "expo-router",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "minSdkVersion": 26
+          }
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -52,7 +68,8 @@
         {
           "cameraPermissionText": "Datalake needs camera access to verify your identity."
         }
-      ]
+      ],
+      "react-native-fast-tflite"
     ],
     "experiments": {
       "typedRoutes": true,
