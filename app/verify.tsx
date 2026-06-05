@@ -1,6 +1,5 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { router } from "expo-router";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { Text, TouchableOpacity, View } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -15,11 +14,12 @@ import { LivenessPrompts } from "@/components/camera/LivenessPrompts";
 import { Button } from "@/components/common/Button";
 import { config } from "@/constants/config";
 import { useCameraSession } from "@/hooks/useCameraSession";
-import { verifyFaceFrame } from "@/lib/cameraInterface"; // 🎯 The C++ Bridge file we implemented
+import { verifyFaceFrame } from "@/lib/cameraInterface";
 import { useAuthStore } from "@/store/authStore";
 import type { LivenessStep } from "@/types";
 import { useTensorflowModel } from "react-native-fast-tflite";
 import { NitroModules } from "react-native-nitro-modules";
+import { router } from "expo-router";
 
 type Outcome = "idle" | "verifying" | "success" | "failed";
 
@@ -37,7 +37,12 @@ export default function Verify() {
   const isEnrolled = useAuthStore((s) => s.isEnrolled);
 
   const insets = useSafeAreaInsets();
-  const detectFaces = useFaceDetector({ performanceMode: "fast" });
+// Ensure performance mode tracks landmarks explicitly
+  const detectFaces = useFaceDetector({
+    performanceMode: 'accurate',     // 🔥 Forces the engine to calculate precision vectors
+    landmarkMode: 'all',            // 🔥 MANDATORY: Tells the C++ layer to populate the .landmarks object
+    classificationMode: 'all'
+  });
   const { resize } = useResizePlugin();
 
   useEffect(() => {
@@ -57,33 +62,36 @@ export default function Verify() {
 
   // Shared variables to drive thread state synchronously
   const isCheckingFrame = useSharedValue(false);
-  const triggerInference = useSharedValue(false);
   const activeChallenge = useSharedValue<"blink" | "smile" | "turn">("blink");
   
-  const AntiSpoofPlugin = useTensorflowModel(
-    require("../assets/tflite/minifasnet_float16.tflite"), []);
+  // 🎯 1. Load the raw fast-tflite plugins smoothly
+  const AntiSpoofPlugin = useTensorflowModel(require("../assets/tflite/4T80x80_minifasnetV1se_float32.tflite") , []);
+  const faceNetPlugin = useTensorflowModel(require("../assets/tflite/mac_mobilefacenet.tflite") , []);
 
+  // 🎯 2. Create active state slots to hold the C++ thread boxes
+  const [boxedAntiSpoofModel, setBoxedAntiSpoofModel] = useState<any>(null);
+  const [boxedMobileFaceModel, setBoxedMobileFaceModel] = useState<any>(null);
+  // At the top of your Verify component
+  const [croppedPreview, setCroppedPreview] = useState<string | null>(null);
 
-  const AntiSpoofModel =  AntiSpoofPlugin.state === 'loaded' ? AntiSpoofPlugin.model : undefined;
+  // 🎯 3. Active synchronized monitor block
+  useEffect(() => {
+    console.log("📡 [Model Synchronizer Check] State Progress -> AntiSpoof:", AntiSpoofPlugin.state, "| FaceNet:", faceNetPlugin.state);
 
+    if (AntiSpoofPlugin.state === "loaded" && AntiSpoofPlugin.model) {
+      if (!boxedAntiSpoofModel) {
+        setBoxedAntiSpoofModel(NitroModules.box(AntiSpoofPlugin.model as any));
+        console.log("📦 [Boxed] MiniFASNet C++ Pointer securely packed!");
+      }
+    }
 
-    const boxedAntiSpoofModel = useMemo(
-      () => (AntiSpoofModel != null ? NitroModules.box(AntiSpoofModel as any): undefined),
-    [AntiSpoofModel]
-)
-
-  const faceNetPlugin = useTensorflowModel(
-    require("../assets/tflite/mobilefacenet_float16.tflite"), []);
-
-
-  const faceNetModel =  faceNetPlugin.state === 'loaded' ? faceNetPlugin.model : undefined;
-
-
-    const boxedMobileFaceModel = useMemo(
-      () => (faceNetModel != null ? NitroModules.box(faceNetModel as any): undefined),
-    [faceNetModel]
-)
-
+    if (faceNetPlugin.state === "loaded" && faceNetPlugin.model) {
+      if (!boxedMobileFaceModel) {
+        setBoxedMobileFaceModel(NitroModules.box(faceNetPlugin.model as any));
+        console.log("📦 [Boxed] MobileFaceNet C++ Pointer securely packed!");
+      }
+    }
+  }, [AntiSpoofPlugin.state, faceNetPlugin.state, AntiSpoofPlugin.model, faceNetPlugin.model]);
 
 
   // Keep the shared value challenge synced with the React visual UI state loop
@@ -92,16 +100,19 @@ export default function Verify() {
   }, [step]);
 
   // JS Thread Callback: Invoked dynamically when the C++ worker passes the model criteria
-const handleVerificationSuccess = useRunOnJS((result: any) => {
+  const handleVerificationSuccess = useRunOnJS((result: any) => {
     // This blocks runs perfectly safe directly on your main UI state machine
+    console.log("🏆 [UI Thread] Match confirmed! Shutting down engine & navigating...");
     setOutcome("success");
-    triggerInference.value = false;
+    router.replace("/verify");
   }, [user]);
 
   const handleVerificationFailure = useRunOnJS((errorMessage: string) => {
+    console.log("❌ [UI Thread] Verification halted:", errorMessage);
     setErrorDetails(errorMessage);
     setOutcome("failed");
-    triggerInference.value = false;
+    alert(`Verification Failed: ${errorMessage}`);
+
   }, []);
 
   const onVerify = () => {
@@ -115,26 +126,32 @@ const handleVerificationSuccess = useRunOnJS((result: any) => {
     // 🎯 1. Change the React state first to mount the frame processor
     setOutcome("verifying");
     setErrorDetails(null);
-    
-    // 🎯 2. Open the shared value gate now that the thread is unlocked
-    triggerInference.value = true; 
-    console.log("🔓 [Shared Value Set] triggerInference.value is now:", triggerInference.value);
+
+
   };
   
 // 🎯 3. CLEAN UP THE ENTIRE WORKLET DEFINITION
   const frameProcessor = useFrameProcessor((frame) => {
     "worklet";
     
-    // Read the values dynamically directly inside the background thread block
-    const isTriggered = triggerInference.value;
-    const isBusy = isCheckingFrame.value;
 
-    if (!isTriggered || isBusy || !faceDescriptor) return;
-    if (boxedAntiSpoofModel == null || boxedMobileFaceModel == null) return;
+    if ( isCheckingFrame.value || !faceDescriptor) { 
+      console.log(
+        "🚧 [Worklet Loop Status]",
+        "\n  ├── isCheckingFrame:", isCheckingFrame.value,
+        "\n  └── faceDescriptor Matrix Loaded:", faceDescriptor != null ? "✅ YES" : "❌ NO"
+      );
+      return;
+    }
 
-    // Lock the lane instantly
+    if (boxedAntiSpoofModel == null || boxedMobileFaceModel == null) {  
+      console.log("⚠️ Models are null inside the worklet context!");
+      return;
+    }
+
+    // 🚦 Lane Unlocked! 
     isCheckingFrame.value = true;
-    console.log("🚦 [GATE PASSED] -> Thread unlocked! Invoking verifyFaceFrame...");
+    console.log("🚀 [DERIVED ENGINE ACTIVE] Both gates cleared! Processing face tensors...");
 
     try {
       const result = verifyFaceFrame({
@@ -147,67 +164,50 @@ const handleVerificationSuccess = useRunOnJS((result: any) => {
         boxedMobileFaceInterpreter: boxedMobileFaceModel,
       });
 
-      if (result.error) {
-        console.log("❌ [Engine Error]:", result.error);
-        isCheckingFrame.value = false;
-        handleVerificationFailure(result.error);
-      } else if (result.isMatch && result.livenessConfirmed) {
-        console.log("🎉 [Match Confirmed] Biometric Vector Distance Verified!");
-        isCheckingFrame.value = false;
+      // 🎯 THE BRIDGE CAPTURE: Check what the C++ engine returned
+      if (result.isMatch && result.livenessConfirmed) {
+        console.log("🎉 C++ Thread Match! Teleporting to Success Handler...");
+        
+        // 🔏 RULE: You MUST wrap the JS function in runOnJS() when inside a worklet!
         handleVerificationSuccess(result);
+        
+        // Keep the lane locked (isCheckingFrame = true) so no new frames process 
+        // while the screen transitions!
+      } else if (result.error) {
+        console.log("❌ C++ Thread Error! Teleporting to Failure Handler...");
+        
+        isCheckingFrame.value = false; // Unlock the lane so they can attempt again
+        handleVerificationFailure(result.error);
       } else {
-        // Face didn't pass verification criteria yet (keep trying)
-        isCheckingFrame.value = false;
+        // The frame just didn't pass the challenge criteria yet (e.g., waiting for a blink).
+        // Safely unlock the lane to let the next video frame stream through.
+        isCheckingFrame.value = false; 
       }
+
     } catch (err: any) {
       isCheckingFrame.value = false;
       console.log("💥 Worklet Exception:", err.message || err);
+      
+      // Pass unexpected structural runtime crashes back to the UI thread
+      handleVerificationFailure(err.message || "Native runtime exception");
     }
-    // 🎯 CRITICAL: Every single variable used inside must be declared in this tracking array
-  }, [faceDescriptor, boxedAntiSpoofModel, boxedMobileFaceModel, triggerInference, isCheckingFrame, activeChallenge, resize, detectFaces]);
 
-  if (!showCamera) {
-    return (
-      <View className="flex-1 bg-[#eef2f6]">
-        <View 
-          className="absolute left-0 right-0 z-50 px-6"
-          style={{ top: Math.max(insets.top, 16) + 8 }}
-          pointerEvents="box-none"
-        >
-          <TouchableOpacity
-            onPress={() => { if (router.canGoBack()) router.back(); }}
-            activeOpacity={0.7}
-            hitSlop={{ top: 20, bottom: 20, left: 20, right: 20 }}
-            className="mb-4 w-10"
-          >
-            <MaterialCommunityIcons name="arrow-left" size={28} color="#0f172a" />
-          </TouchableOpacity>
-        </View>
+    // 🎯 CRITICAL: Add your JS handlers to the dependency array so the worklet can reference them!
+  }, [faceDescriptor, boxedAntiSpoofModel, boxedMobileFaceModel, isCheckingFrame, activeChallenge, resize, detectFaces, handleVerificationSuccess, handleVerificationFailure]);    
 
-        <View className="flex-1 px-6 pb-8" style={{ paddingTop: Math.max(insets.top, 16) + 64 }}>
-          <TouchableOpacity 
-            className="flex-1 overflow-hidden rounded-[40px] bg-white shadow-xl elevation-5 items-center justify-center"
-            activeOpacity={0.9}
-            onPress={() => setShowCamera(true)}
-          >
-            <MaterialCommunityIcons name="face-recognition" size={120} color="#0f172a" />
-            <Text className="mt-8 text-2xl font-medium text-[#0f172a]">Face scan</Text>
-          </TouchableOpacity>
-        </View>
-      </View>
-    );
-  }
 
   return (
     <View className="flex-1 bg-black">
         {/* 🎯 FIX 3: Isolated layout layer ensuring Camera occupies 100% full screen real estate */}
         <View className="absolute inset-0 z-10">
-          <CameraPreview
-            device={device}
-            hasPermission={hasPermission}
-            isActive={isActive}
-            frameProcessor={outcome === "verifying" ? frameProcessor : undefined}
-          />
+        <CameraPreview
+          device={device}
+          hasPermission={hasPermission}
+          isActive={isActive}
+          // 🎯 If idle, failed, or success, the frame processor is undefined and completely turned off.
+          // It ONLY runs while outcome is strictly set to "verifying".
+          frameProcessor={outcome === "verifying" ? frameProcessor : undefined} 
+        />
           <FaceOverlay />
         </View>
 
@@ -270,6 +270,17 @@ const handleVerificationSuccess = useRunOnJS((result: any) => {
       </View>
     );
   }
+
+
+
+
+
+
+
+
+
+
+  
 //   return (
 //     <View className="flex-1 bg-black">
 //       <View 

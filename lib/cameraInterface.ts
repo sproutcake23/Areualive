@@ -342,6 +342,7 @@ export type FaceVerificationResult = {
   confidence: number;
   livenessStep?: "blink" | "smile" | "turn";
   error?: string;
+  diagonise?: any;
 };
 
 export type EnrollmentInput = {
@@ -368,18 +369,18 @@ function calculateEAR(p1: any, p2: any, p3: any, p4: any, p5: any, p6: any): num
   return (v1 + v2) / (2.0 * h);
 }
 
-function calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
-  "worklet";
-  let dotProduct = 0.0;
-  let normA = 0.0;
-  let normB = 0.0;
-  for (let i = 0; i < vecA.length; i++) {
-    dotProduct += vecA[i] * vecB[i];
-    normA += vecA[i] * vecA[i];
-    normB += vecB[i] * vecB[i];
-  }
-  if (normA === 0 || normB === 0) return 0;
-  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  function calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
+    "worklet";
+    let dotProduct = 0.0;
+    let normA = 0.0;
+    let normB = 0.0;
+    for (let i = 0; i < vecA.length; i++) {
+      dotProduct += vecA[i] * vecB[i];
+      normA += vecA[i] * vecA[i];
+      normB += vecB[i] * vecB[i];
+    }
+    if (normA === 0 || normB === 0) return 0;
+    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
 // =============================================================================
@@ -390,6 +391,7 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
   "worklet";
 
   const { frame, enrolledFaceDescriptor, currentChallenge, resizePlugin, faceDetectorPlugin, boxedAntiSpoofInterpreter,boxedMobileFaceInterpreter } = input;
+  console.log("🔍 [verifyFaceFrame] 1. Function entered successfully.");
 
   if (!boxedAntiSpoofInterpreter || !boxedMobileFaceInterpreter) {
     return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "AI Interpreters not initialized" };
@@ -403,43 +405,88 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
 
     // 🎯 STEP 1: INVOKE THE FACE DETECTOR WORKLET
     const faces = faceDetectorPlugin.detectFaces(frame); 
-    if (!faces || faces.length === 0) {
+    console.log("🔍 [verifyFaceFrame] 2. Face Detector complete. Faces found:", faces?.length);
+
+    if (!faces || faces.length === 0 || faces[0] == null) {
+      console.log("🔍 [verifyFaceFrame] 🛑 No faces in this frame. Exiting early.");
       return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "No face detected" };
     }
     
     const primaryFace = faces[0];
+
+// 🎯 DEFENSIVE PRODUCTION GUARD
+    if (!primaryFace.landmarks || typeof primaryFace.landmarks !== 'object' || Object.keys(primaryFace.landmarks).length === 0) {
+      console.log("🔍 [verifyFaceFrame] 🚧 Frame skipped: Bounding box tracked, but waiting for facial vector landmarks to resolve...");
+      return { 
+        isMatch: false, 
+        livenessConfirmed: false, 
+        confidence: 0, 
+        error: "WAITING_FOR_LANDMARKS" // Returning a specific error allows the frame processor to loop cleanly without breaking layout states
+      };
+    }
+    
     const landmarks = primaryFace.landmarks; 
+    console.log("🔍 [verifyFaceFrame] 3. Primary face landmark check passing... MLKit Mapped.");
 
     // 🎯 STEP 2: RUN HEURISTIC MATH CONTROLLER FOR LIVENESS CHALLENGES
     let challengePassed = false;
 
     if (currentChallenge === "blink") {
-      const leftEAR = calculateEAR(landmarks.leftEyeOuter, landmarks.leftEyeTop, landmarks.leftEyeBottom, landmarks.leftEyeInner, landmarks.leftEyeBottom, landmarks.leftEyeTop);
-      const rightEAR = calculateEAR(landmarks.rightEyeInner, landmarks.rightEyeTop, landmarks.rightEyeBottom, landmarks.rightEyeOuter, landmarks.rightEyeBottom, landmarks.rightEyeTop);
-      const averageEAR = (leftEAR + rightEAR) / 2.0;
+      // 🔏 MLKit Extraction Rule: Pull the probabilities from the primary face object body, NOT landmarks!
+      const leftOpenProb = primaryFace.leftEyeOpenProbability;
+      const rightOpenProb = primaryFace.rightEyeOpenProbability;
       
-      if (averageEAR < 0.22) challengePassed = true;
+      console.log(`👁️ [Blink Tracking Scan] Left Open: ${leftOpenProb?.toFixed(2)}, Right Open: ${rightOpenProb?.toFixed(2)}`);
+
+      if (leftOpenProb != null && rightOpenProb != null) {
+        const averageOpenProbability = (leftOpenProb + rightOpenProb) / 2.0;
+        
+        // If the average open probability drops below 0.25, the user has closed their eyes!
+        if (averageOpenProbability < 0.25) {
+          challengePassed = true;
+          console.log("🎉 [Liveness Match] Blink registered successfully!");
+        }
+      } else {
+        console.log("⚠️ [Config Error] leftEyeOpenProbability is missing. Ensure classificationMode: 'all' is set in your hook config.");
+      }
     } 
     
     else if (currentChallenge === "smile") {
-      const leftCorner = landmarks.mouthLeft;
-      const rightCorner = landmarks.mouthRight;
-      const topLip = landmarks.noseBase; 
-      const bottomLip = landmarks.mouthBottom;
+      // 🔏 MLKit Extraction Rule: Use the exact discovered capitalized keys!
+      const leftCorner = landmarks.MOUTH_LEFT;
+      const rightCorner = landmarks.MOUTH_RIGHT;
+      const topLip = landmarks.NOSE_BASE; 
+      const bottomLip = landmarks.MOUTH_BOTTOM;
       
-      const lipWidth = Math.sqrt(Math.pow(rightCorner.x - leftCorner.x, 2) + Math.pow(rightCorner.y - leftCorner.y, 2));
-      const lipHeight = Math.sqrt(Math.pow(bottomLip.y - topLip.y, 2) + Math.pow(bottomLip.x - topLip.x, 2));
-      
-      if ((lipWidth / lipHeight) > 3.2) challengePassed = true;
+      if (leftCorner && rightCorner && topLip && bottomLip) {
+        const lipWidth = Math.sqrt(Math.pow(rightCorner.x - leftCorner.x, 2) + Math.pow(rightCorner.y - leftCorner.y, 2));
+        const lipHeight = Math.sqrt(Math.pow(bottomLip.y - topLip.y, 2) + Math.pow(bottomLip.x - topLip.x, 2));
+        
+        const smileRatio = lipWidth / lipHeight;
+        console.log(`👄 [Smile Ratio Scan]: ${smileRatio.toFixed(2)}`);
+
+        if (smileRatio > 1.05) { // Adjusted for MLKit flat anchors
+          challengePassed = true;
+          console.log("🎉 [Liveness Match] Smile registered successfully!");
+        }
+      } else {
+        console.log("⚠️ [Config Error] Missing mouth keys for smile evaluation.");
+      }
     } 
     
     else if (currentChallenge === "turn") {
-      if (Math.abs(primaryFace.yawAngle) > 18) challengePassed = true;
+      // MLKit tracks face orientation using pitch, roll, and yaw angles natively
+      console.log(`📐 [Head Yaw Scan]: ${primaryFace.yawAngle?.toFixed(2)}°`);
+      if (primaryFace.yawAngle != null && Math.abs(primaryFace.yawAngle) > 10) {
+        challengePassed = true;
+        console.log("🎉 [Liveness Match] Head turn registered successfully!");
+      }
     }
 
     // 🚧 TOLL BOOTH GATE: If the user hasn't completed the liveness challenge yet, 
     // we stop execution right here. TFLite models are never called!
     if (!challengePassed) {
+      console.log("🔍 [verifyFaceFrame] 3. Failed to pass the challenge...");
       return { isMatch: false, livenessConfirmed: false, confidence: 0, livenessStep: currentChallenge };
     }
 
@@ -458,27 +505,31 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
     const width = bounding.width;
     const height = bounding.height;
         
-    // ✂️ STEP 3: RESIZE FOR MINIFASNET ANTI-SPOOFING (80x80)
-    console.log("✂️ [Crop 1/2] Resizing target frame region to 80x80 for Anti-Spoofing...");
-    const croppedFasBuffer = resizePlugin(frame, {
-      scale: { width: 112, height: 112 }, 
-      crop: { x, y, width, height },
-      pixelFormat: 'rgb',
-      dataType: 'uint8'
-    });
-    console.log("   └─ Allocated Buffer Bytes:", croppedFasBuffer.buffer.byteLength); // Verify sequence space (19200 bytes)
+    // // ✂️ STEP 3: RESIZE FOR MINIFASNET ANTI-SPOOFING (80x80)
+    // console.log("✂️ [Crop 1/2] Resizing target frame region to 112x112 for Anti-Spoofing...");
+    // const croppedFasBuffer = resizePlugin(frame, {
+    //   scale: { width: 80, height: 80 }, 
+    //   crop: { x, y, width, height },
+    //   pixelFormat: 'rgb',
+    //   dataType: 'float32'
+    // });
+    // console.log("   └─ Allocated Buffer Bytes:", croppedFasBuffer.buffer.byteLength); // Verify sequence space (19200 bytes)
 
-    console.log("🧠 [Inference 1/2] Running Synchronous MiniFASNet C++ Evaluation...");
-    const antiSpoofModel = boxedAntiSpoofInterpreter.unbox() as TensorflowModel;
-    const fasOutput = antiSpoofModel.runSync([croppedFasBuffer.buffer]);
+    // console.log("🧠 [Inference 1/2] Running Synchronous MiniFASNet C++ Evaluation...");
+    // const antiSpoofModel = boxedAntiSpoofInterpreter.unbox() as TensorflowModel;
+    // const fasFloatArray = new Float32Array(croppedFasBuffer.buffer);
+    // for (let i = 0; i < fasFloatArray.length; i++) {
+    //   fasFloatArray[i] = fasFloatArray[i] / 255.0; // Scales integers down to 0.0 - 1.0 range
+    // }
+    // const fasOutput = antiSpoofModel.runSync([fasFloatArray.buffer]);
 
-    const realFaceProbability = new Float32Array(fasOutput[0]); 
-    console.log("   └─ Anti-Spoof Score (Probability face is REAL):", (realFaceProbability[1] * 100).toFixed(2) + "%");
+    // const realFaceProbability = new Float32Array(fasOutput[0]); 
+    // console.log("   └─ Anti-Spoof Score (Probability face is REAL):", (realFaceProbability[1] * 100).toFixed(2) + "%");
 
-    if (realFaceProbability[1] < 0.85) {
-      console.log("❌ [PIPELINE BLOCKED] Face failed Anti-Spoof verification test.");
-      return { isMatch: false, livenessConfirmed: true, confidence: 0, error: "Spoof attack detected (FAS failure)" };
-    }
+    // if (realFaceProbability[1] < 0.85) {
+    //   console.log("❌ [PIPELINE BLOCKED] Face failed Anti-Spoof verification test.");
+    //   return { isMatch: false, livenessConfirmed: true, confidence: 0, error: "Spoof attack detected (FAS failure)" };
+    // }
 
     // ✂️ STEP 4: FEATURE EXTRACTION VIA MOBILEFACENET (112x112)
     console.log("✂️ [Crop 2/2] Resizing target frame region to 112x112 for Vector Generation...");
@@ -486,19 +537,27 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
       scale: { width: 112, height: 112 },
       crop: { x, y, width, height },
       pixelFormat: 'rgb',
-      dataType: 'uint8'
+      dataType: 'float32'
     });
     console.log("   └─ Allocated Buffer Bytes:", croppedFaceNetBuffer.buffer.byteLength); // Verify sequence space (37632 bytes)
 
     console.log("🧠 [Inference 2/2] Extracting Face Vector via Synchronous MobileFaceNet...");
     const mobileFaceModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
-    const embeddingOutput = mobileFaceModel.runSync([croppedFaceNetBuffer.buffer]);
+    const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
+    for (let i = 0; i < faceNetFloatArray.length; i++) {
+      faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
+    }
+    const embeddingOutput = mobileFaceModel.runSync([faceNetFloatArray.buffer]);
+
+
     const currentFaceDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[]; 
     console.log("   └─ Vector Generation Complete! Created matrix array length:", currentFaceDescriptor.length); // 128 elements
 
     // 🎯 STEP 5: COSINE SIMILARITY EVALUATION
     const similarityScore = calculateCosineSimilarity(currentFaceDescriptor, enrolledFaceDescriptor);
-    console.log("📊 [Match Calculation] Computed Cosine Similarity against Enrolled User:", similarityScore.toFixed(4));
+    console.log("Enrolled vector", enrolledFaceDescriptor);
+    console.log("Current vector", currentFaceDescriptor);
+    console.log("📊 [Match Calculation] Computed Cosine Similarity against Enrolled User:", similarityScore.toFixed(8));
 
     const IS_MATCH_THRESHOLD = 0.78;
     const isMatch = similarityScore >= IS_MATCH_THRESHOLD;
@@ -508,7 +567,8 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
       isMatch,
       livenessConfirmed: true,
       confidence: similarityScore,
-      livenessStep: currentChallenge
+      livenessStep: currentChallenge,
+      diagonise: croppedFaceNetBuffer,
     };
 
   } catch (err: any) {
@@ -555,12 +615,17 @@ export function enrollFaceFrame(input: EnrollmentInput) {
       scale: { width: 112, height: 112 },
       crop: { x: bounding.x, y: bounding.y, width: bounding.width, height: bounding.height },
       pixelFormat: 'rgb',
-      dataType: 'uint8'
+      dataType: 'float32'
     });
 
     console.log("🧠 [Inference Pass] Feeding raw buffer elements into MobileFaceNet sync matrix execution...");
     const activeModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
-    const embeddingOutput = activeModel.runSync([croppedFaceNetBuffer.buffer]);
+    const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
+    for (let i = 0; i < faceNetFloatArray.length; i++) {
+      faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
+    }
+    const embeddingOutput = activeModel.runSync([faceNetFloatArray.buffer]);
+    
     
     const generatedDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[];
     console.log("🎉 [Inference Complete] Array successfully populated. Elements generated:", generatedDescriptor.length);

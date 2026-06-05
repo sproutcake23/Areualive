@@ -171,7 +171,7 @@ export default function Enrollment() {
 console.log(`📊 [Button State Check] Name Length: ${name.trim().length}, Busy: ${busy}, CanEnroll: ${canEnroll}`);
 
   const faceNetPlugin = useTensorflowModel(
-    require("../../assets/tflite/mobilefacenet_float16.tflite"), []);
+    require("../../assets/tflite/mac_mobilefacenet.tflite"), []);
 
   const faceNetModel =  faceNetPlugin.state === 'loaded' ? faceNetPlugin.model : undefined;
 
