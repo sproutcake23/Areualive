@@ -564,56 +564,61 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
       return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "Invalid face bounds" };
     }
 
-    const x = bounding.x;
-    const y = bounding.y;
-    const width = bounding.width;
-    const height = bounding.height;
-        
-    // // ✂️ STEP 3: RESIZE FOR MINIFASNET ANTI-SPOOFING (80x80)
-    // console.log("✂️ [Crop 1/2] Resizing target frame region to 112x112 for Anti-Spoofing...");
-    // const croppedFasBuffer = resizePlugin(frame, {
-    //   scale: { width: 80, height: 80 }, 
-    //   crop: { x, y, width, height },
-    //   pixelFormat: 'rgb',
-    //   dataType: 'float32'
-    // });
-    // console.log("   └─ Allocated Buffer Bytes:", croppedFasBuffer.buffer.byteLength); // Verify sequence space (19200 bytes)
+    // 🎯 NEW: COORDINATE MAPPING LOGIC (UI/Oriented -> Buffer Space)
+    // Most Android front cameras are landscape-native (e.g. 1280x720).
+    // If the phone is held in portrait, MLKit returns bounds in oriented space (720x1280).
+    // We must map these back to the raw 1280x720 buffer for the resizePlugin.
+    let cropX = bounding.x;
+    let cropY = bounding.y;
+    let cropW = bounding.width;
+    let cropH = bounding.height;
 
-    // console.log("🧠 [Inference 1/2] Running Synchronous MiniFASNet C++ Evaluation...");
-    // const antiSpoofModel = boxedAntiSpoofInterpreter.unbox() as TensorflowModel;
-    // const fasFloatArray = new Float32Array(croppedFasBuffer.buffer);
-    // for (let i = 0; i < fasFloatArray.length; i++) {
-    //   fasFloatArray[i] = fasFloatArray[i] / 255.0; // Scales integers down to 0.0 - 1.0 range
-    // }
-    // const fasOutput = antiSpoofModel.runSync([fasFloatArray.buffer]);
+    if (frame.orientation === 'landscape-left') {
+      // 90° CW Rotation
+      cropX = frame.width - bounding.y - bounding.height;
+      cropY = bounding.x;
+      cropW = bounding.height;
+      cropH = bounding.width;
+    } else if (frame.orientation === 'landscape-right') {
+      // 270° CW Rotation
+      cropX = bounding.y;
+      cropY = frame.height - bounding.x - bounding.width;
+      cropW = bounding.height;
+      cropH = bounding.width;
+    } else if (frame.orientation === 'portrait-upside-down') {
+      cropX = frame.width - bounding.x - bounding.width;
+      cropY = frame.height - bounding.y - bounding.height;
+    }
 
-    // const realFaceProbability = new Float32Array(fasOutput[0]); 
-    // console.log("   └─ Anti-Spoof Score (Probability face is REAL):", (realFaceProbability[1] * 100).toFixed(2) + "%");
+    console.log(`📸 [Frame Metadata] Size: ${frame.width}x${frame.height}, Orientation: ${frame.orientation}`);
+    console.log(`🎯 [Oriented Bounds] x: ${bounding.x}, y: ${bounding.y}, w: ${bounding.width}, h: ${bounding.height}`);
+    console.log(`✂️ [Buffer Crop] x: ${cropX.toFixed(0)}, y: ${cropY.toFixed(0)}, w: ${cropW.toFixed(0)}, h: ${cropH.toFixed(0)}`);
 
-    // if (realFaceProbability[1] < 0.85) {
-    //   console.log("❌ [PIPELINE BLOCKED] Face failed Anti-Spoof verification test.");
-    //   return { isMatch: false, livenessConfirmed: true, confidence: 0, error: "Spoof attack detected (FAS failure)" };
-    // }
-
-    // ✂️ STEP 4: FEATURE EXTRACTION VIA MOBILEFACENET (112x112)
     console.log("✂️ [Crop 2/2] Resizing target frame region to 112x112 for Vector Generation...");
     const croppedFaceNetBuffer = resizePlugin(frame, {
       scale: { width: 112, height: 112 },
-      crop: { x, y, width, height },
+      crop: { x: cropX, y: cropY, width: cropW, height: cropH },
+      rotation: frame.orientation, // 🔥 CRITICAL: Rotate the crop to be upright for the model
       pixelFormat: 'rgb',
       dataType: 'float32'
     });
     console.log("   └─ Allocated Buffer Bytes:", croppedFaceNetBuffer.buffer.byteLength); // Verify sequence space (37632 bytes)
 
-    
-
 
     console.log("🧠 [Inference 2/2] Extracting Face Vector via Synchronous MobileFaceNet...");
     const mobileFaceModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
-    const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
+    
+    // 🔥 FIX: Explicitly deep-copy the buffer to the JS heap to allow mutation
+    const faceNetFloatArray = Float32Array.from(new Float32Array(croppedFaceNetBuffer.buffer));
+    
+    // Check if mutation works
+    const firstValBefore = faceNetFloatArray[0];
     for (let i = 0; i < faceNetFloatArray.length; i++) {
       faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
     }
+    const firstValAfter = faceNetFloatArray[0];
+    console.log(`🧪 [Mutation Check] Before: ${firstValBefore.toFixed(2)}, After: ${firstValAfter.toFixed(6)}`);
+
     const visualCropUri = convertFloatArrayToBmpUri(faceNetFloatArray, 112, 112);
     const embeddingOutput = mobileFaceModel.runSync([faceNetFloatArray.buffer]);
 
@@ -677,18 +682,44 @@ export function enrollFaceFrame(input: EnrollmentInput) {
     }
 
     const bounding = faces[0].bounds;
+    
+    // 🎯 NEW: COORDINATE MAPPING LOGIC (UI/Oriented -> Buffer Space)
+    let cropX = bounding.x;
+    let cropY = bounding.y;
+    let cropW = bounding.width;
+    let cropH = bounding.height;
+
+    if (frame.orientation === 'landscape-left') {
+      cropX = frame.width - bounding.y - bounding.height;
+      cropY = bounding.x;
+      cropW = bounding.height;
+      cropH = bounding.width;
+    } else if (frame.orientation === 'landscape-right') {
+      cropX = bounding.y;
+      cropY = frame.height - bounding.x - bounding.width;
+      cropW = bounding.height;
+      cropH = bounding.width;
+    } else if (frame.orientation === 'portrait-upside-down') {
+      cropX = frame.width - bounding.x - bounding.width;
+      cropY = frame.height - bounding.y - bounding.height;
+    }
+
     console.log("✂️ [Crop Pass] Found face bounds. Commencing 112x112 image downsampling matrix extraction...");
 
     const croppedFaceNetBuffer = resizePlugin(frame, {
       scale: { width: 112, height: 112 },
-      crop: { x: bounding.x, y: bounding.y, width: bounding.width, height: bounding.height },
+      crop: { x: cropX, y: cropY, width: cropW, height: cropH },
+      rotation: frame.orientation,
       pixelFormat: 'rgb',
       dataType: 'float32'
     });
 
     console.log("🧠 [Inference Pass] Feeding raw buffer elements into MobileFaceNet sync matrix execution...");
     const activeModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
-    const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
+    
+    // 🔥 FIX: Explicitly deep-copy the buffer to the JS heap to allow mutation
+    const faceNetFloatArray = Float32Array.from(new Float32Array(croppedFaceNetBuffer.buffer));
+    
     for (let i = 0; i < faceNetFloatArray.length; i++) {
       faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
     }
