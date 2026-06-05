@@ -594,11 +594,17 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
     console.log(`🎯 [Oriented Bounds] x: ${bounding.x}, y: ${bounding.y}, w: ${bounding.width}, h: ${bounding.height}`);
     console.log(`✂️ [Buffer Crop] x: ${cropX.toFixed(0)}, y: ${cropY.toFixed(0)}, w: ${cropW.toFixed(0)}, h: ${cropH.toFixed(0)}`);
 
+    // 🎯 FIX: Map orientation string to degree string to avoid "Invalid rotation value" crash
+    let rotationDeg: '0' | '90' | '180' | '270' = '0';
+    if (frame.orientation === 'landscape-left') rotationDeg = '90';
+    else if (frame.orientation === 'portrait-upside-down') rotationDeg = '180';
+    else if (frame.orientation === 'landscape-right') rotationDeg = '270';
+
     console.log("✂️ [Crop 2/2] Resizing target frame region to 112x112 for Vector Generation...");
     const croppedFaceNetBuffer = resizePlugin(frame, {
       scale: { width: 112, height: 112 },
       crop: { x: cropX, y: cropY, width: cropW, height: cropH },
-      rotation: frame.orientation, // 🔥 CRITICAL: Rotate the crop to be upright for the model
+      rotation: rotationDeg, // 🔥 FIXED: Pass "90", "180" etc instead of "landscape-left"
       pixelFormat: 'rgb',
       dataType: 'float32'
     });
@@ -706,10 +712,16 @@ export function enrollFaceFrame(input: EnrollmentInput) {
 
     console.log("✂️ [Crop Pass] Found face bounds. Commencing 112x112 image downsampling matrix extraction...");
 
+    // 🎯 FIX: Map orientation string to degree string to avoid "Invalid rotation value" crash
+    let rotationDeg: '0' | '90' | '180' | '270' = '0';
+    if (frame.orientation === 'landscape-left') rotationDeg = '90';
+    else if (frame.orientation === 'portrait-upside-down') rotationDeg = '180';
+    else if (frame.orientation === 'landscape-right') rotationDeg = '270';
+
     const croppedFaceNetBuffer = resizePlugin(frame, {
       scale: { width: 112, height: 112 },
       crop: { x: cropX, y: cropY, width: cropW, height: cropH },
-      rotation: frame.orientation,
+      rotation: rotationDeg,
       pixelFormat: 'rgb',
       dataType: 'float32'
     });
