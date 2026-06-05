@@ -156,7 +156,7 @@
 
 // export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationResult {
 //   "worklet";
-  
+
 //   if (!miniFasNetInterpreter || !mobileFaceNetInterpreter) {
 //     return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "AI Interpreters not initialized" };
 //   }
@@ -169,7 +169,7 @@
 //     if (!faces || faces.length === 0) {
 //       return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "No face detected" };
 //     }
-    
+
 //     const primaryFace = faces[0];
 //     const landmarks = primaryFace.landmarks; 
 
@@ -180,22 +180,22 @@
 //       const leftEAR = calculateEAR(landmarks.leftEyeOuter, landmarks.leftEyeTop, landmarks.leftEyeBottom, landmarks.leftEyeInner, landmarks.leftEyeBottom, landmarks.leftEyeTop);
 //       const rightEAR = calculateEAR(landmarks.rightEyeInner, landmarks.rightEyeTop, landmarks.rightEyeBottom, landmarks.rightEyeOuter, landmarks.rightEyeBottom, landmarks.rightEyeTop);
 //       const averageEAR = (leftEAR + rightEAR) / 2.0;
-      
+
 //       if (averageEAR < 0.22) challengePassed = true;
 //     } 
-    
+
 //     else if (currentChallenge === "smile") {
 //       const leftCorner = landmarks.mouthLeft;
 //       const rightCorner = landmarks.mouthRight;
 //       const topLip = landmarks.noseBase; // Fallback relative calculation point
 //       const bottomLip = landmarks.mouthBottom;
-      
+
 //       const lipWidth = Math.sqrt(Math.pow(rightCorner.x - leftCorner.x, 2) + Math.pow(rightCorner.y - leftCorner.y, 2));
 //       const lipHeight = Math.sqrt(Math.pow(bottomLip.y - topLip.y, 2) + Math.pow(bottomLip.x - topLip.x, 2));
-      
+
 //       if ((lipWidth / lipHeight) > 3.2) challengePassed = true;
 //     } 
-    
+
 //     else if (currentChallenge === "turn") {
 //       // Evaluate face angle orientation directly using the plugin's built-in orientation calculations
 //       if (Math.abs(primaryFace.yawAngle) > 18) challengePassed = true;
@@ -216,7 +216,7 @@
 //     const y = bounding.y;
 //     const width = bounding.width;
 //     const height = bounding.height;
-        
+
 //     const croppedFasBuffer = resizePlugin(frame, {
 //       scale: { width: 80, height: 80 }, // 🎯 FIXED: Correct model specifications
 //       crop: { x, y, width, height },
@@ -267,7 +267,7 @@
 
 //   try {
 //     const { frame, resizePlugin, faceDetectorPlugin } = input;
-    
+
 //     const faces = faceDetectorPlugin(frame);
 //     if (!faces || faces.length === 0) {
 //       return { faceDescriptor: [], error: "No target face found for enrollment" };
@@ -318,7 +318,7 @@ export function initializeBridgeModels(fasModel: TensorflowModel, faceNetModel: 
   // 🛰️ Bind directly to the global engine context
   miniFasNetInterpreter = fasModel;
   mobileFaceNetInterpreter = faceNetModel;
-  
+
   console.log("🧠 [JSI Bridge Memory Bind] Interpreters successfully mapped and stable!");
 }
 
@@ -359,7 +359,7 @@ export type EnrollmentResult = {
 
 function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, height: number): string {
   "worklet"; // 🔥 Enforces that this entire function runs on the C++ thread
-  
+
   const padding = (4 - ((width * 3) % 4)) % 4;
   const pixelDataSize = (width * 3 + padding) * height;
   const fileSize = 54 + pixelDataSize;
@@ -373,9 +373,9 @@ function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, heig
   view.setUint32(10, 54, true);
   view.setUint32(14, 40, true);
   view.setUint32(18, width, true);
-  view.setUint32(22, -height, true); 
+  view.setUint32(22, -height, true);
   view.setUint16(26, 1, true);
-  view.setUint16(28, 24, true); 
+  view.setUint16(28, 24, true);
   view.setUint32(34, pixelDataSize, true);
 
   const bmpBytes = new Uint8Array(buffer, 54);
@@ -388,10 +388,10 @@ function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, heig
       let g = Math.max(0, Math.min(255, Math.floor(floatArray[srcIdx + 1] * 128.0 + 127.5)));
       let b = Math.max(0, Math.min(255, Math.floor(floatArray[srcIdx + 2] * 128.0 + 127.5)));
 
-      bmpBytes[dstIdx]     = b; 
-      bmpBytes[dstIdx + 1] = g; 
-      bmpBytes[dstIdx + 2] = r; 
-      
+      bmpBytes[dstIdx] = b;
+      bmpBytes[dstIdx + 1] = g;
+      bmpBytes[dstIdx + 2] = r;
+
       srcIdx += 3;
       dstIdx += 3;
     }
@@ -415,8 +415,8 @@ function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, heig
     const enc4 = isNaN(byte3) ? 64 : byte3 & 63;
 
     base64String += chars.charAt(enc1) + chars.charAt(enc2) +
-                    (enc3 === 64 ? "=" : chars.charAt(enc3)) +
-                    (enc4 === 64 ? "=" : chars.charAt(enc4));
+      (enc3 === 64 ? "=" : chars.charAt(enc3)) +
+      (enc4 === 64 ? "=" : chars.charAt(enc4));
   }
 
   return `data:image/bmp;base64,${base64String}`;
@@ -433,32 +433,32 @@ function calculateEAR(p1: any, p2: any, p3: any, p4: any, p5: any, p6: any): num
   return (v1 + v2) / (2.0 * h);
 }
 
-  function calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
-    "worklet";
-    if (!vecA || !vecB || vecA.length === 0 || vecB.length === 0) return 0;
-    
-    // 🎯 FIX: Prevent NaN crashing if comparing a real 192D model output against a stale 128D mock from MMKV
-    const minLength = Math.min(vecA.length, vecB.length);
-    if (vecA.length !== vecB.length) {
-      console.log(`⚠️ [Vector Mismatch] Comparing a ${vecA.length}D array against a ${vecB.length}D array. Are you using a stale mock enrollment?`);
-    }
+function calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
+  "worklet";
+  if (!vecA || !vecB || vecA.length === 0 || vecB.length === 0) return 0;
 
-    let dotProduct = 0.0;
-    let normA = 0.0;
-    let normB = 0.0;
-    
-    for (let i = 0; i < minLength; i++) {
-      // Safety check to ensure we are multiplying valid numbers, preventing NaN propagation
-      const a = vecA[i] || 0;
-      const b = vecB[i] || 0;
-      
-      dotProduct += a * b;
-      normA += a * a;
-      normB += b * b;
-    }
-    
-    if (normA === 0 || normB === 0) return 0;
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  // 🎯 FIX: Prevent NaN crashing if comparing a real 192D model output against a stale 128D mock from MMKV
+  const minLength = Math.min(vecA.length, vecB.length);
+  if (vecA.length !== vecB.length) {
+    console.log(`⚠️ [Vector Mismatch] Comparing a ${vecA.length}D array against a ${vecB.length}D array. Are you using a stale mock enrollment?`);
+  }
+
+  let dotProduct = 0.0;
+  let normA = 0.0;
+  let normB = 0.0;
+
+  for (let i = 0; i < minLength; i++) {
+    // Safety check to ensure we are multiplying valid numbers, preventing NaN propagation
+    const a = vecA[i] || 0;
+    const b = vecB[i] || 0;
+
+    dotProduct += a * b;
+    normA += a * a;
+    normB += b * b;
+  }
+
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
 // =============================================================================
@@ -468,7 +468,7 @@ function calculateEAR(p1: any, p2: any, p3: any, p4: any, p5: any, p6: any): num
 export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationResult {
   "worklet";
 
-  const { frame, enrolledFaceDescriptor, currentChallenge, resizePlugin, faceDetectorPlugin, boxedAntiSpoofInterpreter,boxedMobileFaceInterpreter } = input;
+  const { frame, enrolledFaceDescriptor, currentChallenge, resizePlugin, faceDetectorPlugin, boxedAntiSpoofInterpreter, boxedMobileFaceInterpreter } = input;
   console.log("🔍 [verifyFaceFrame] 1. Function entered successfully.");
 
   if (!boxedAntiSpoofInterpreter || !boxedMobileFaceInterpreter) {
@@ -482,28 +482,28 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
     // console.log("📷 [Stream Entry] Passing raw frame ID:", frame.toString(), "to MediaPipe Face Detector.");
 
     // 🎯 STEP 1: INVOKE THE FACE DETECTOR WORKLET
-    const faces = faceDetectorPlugin.detectFaces(frame); 
+    const faces = faceDetectorPlugin.detectFaces(frame);
     console.log("🔍 [verifyFaceFrame] 2. Face Detector complete. Faces found:", faces?.length);
 
     if (!faces || faces.length === 0 || faces[0] == null) {
       console.log("🔍 [verifyFaceFrame] 🛑 No faces in this frame. Exiting early.");
       return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "No face detected" };
     }
-    
+
     const primaryFace = faces[0];
 
-// 🎯 DEFENSIVE PRODUCTION GUARD
+    // 🎯 DEFENSIVE PRODUCTION GUARD
     if (!primaryFace.landmarks || typeof primaryFace.landmarks !== 'object' || Object.keys(primaryFace.landmarks).length === 0) {
       console.log("🔍 [verifyFaceFrame] 🚧 Frame skipped: Bounding box tracked, but waiting for facial vector landmarks to resolve...");
-      return { 
-        isMatch: false, 
-        livenessConfirmed: false, 
-        confidence: 0, 
+      return {
+        isMatch: false,
+        livenessConfirmed: false,
+        confidence: 0,
         error: "WAITING_FOR_LANDMARKS" // Returning a specific error allows the frame processor to loop cleanly without breaking layout states
       };
     }
-    
-    const landmarks = primaryFace.landmarks; 
+
+    const landmarks = primaryFace.landmarks;
     console.log("🔍 [verifyFaceFrame] 3. Primary face landmark check passing... MLKit Mapped.");
 
     // 🎯 STEP 2: RUN HEURISTIC MATH CONTROLLER FOR LIVENESS CHALLENGES
@@ -513,12 +513,12 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
       // 🔏 MLKit Extraction Rule: Pull the probabilities from the primary face object body, NOT landmarks!
       const leftOpenProb = primaryFace.leftEyeOpenProbability;
       const rightOpenProb = primaryFace.rightEyeOpenProbability;
-      
+
       console.log(`👁️ [Blink Tracking Scan] Left Open: ${leftOpenProb?.toFixed(2)}, Right Open: ${rightOpenProb?.toFixed(2)}`);
 
       if (leftOpenProb != null && rightOpenProb != null) {
         const averageOpenProbability = (leftOpenProb + rightOpenProb) / 2.0;
-        
+
         // If the average open probability drops below 0.25, the user has closed their eyes!
         if (averageOpenProbability < 0.25) {
           challengePassed = true;
@@ -527,19 +527,19 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
       } else {
         console.log("⚠️ [Config Error] leftEyeOpenProbability is missing. Ensure classificationMode: 'all' is set in your hook config.");
       }
-    } 
-    
+    }
+
     else if (currentChallenge === "smile") {
       // 🔏 MLKit Extraction Rule: Use the exact discovered capitalized keys!
       const leftCorner = landmarks.MOUTH_LEFT;
       const rightCorner = landmarks.MOUTH_RIGHT;
-      const topLip = landmarks.NOSE_BASE; 
+      const topLip = landmarks.NOSE_BASE;
       const bottomLip = landmarks.MOUTH_BOTTOM;
-      
+
       if (leftCorner && rightCorner && topLip && bottomLip) {
         const lipWidth = Math.sqrt(Math.pow(rightCorner.x - leftCorner.x, 2) + Math.pow(rightCorner.y - leftCorner.y, 2));
         const lipHeight = Math.sqrt(Math.pow(bottomLip.y - topLip.y, 2) + Math.pow(bottomLip.x - topLip.x, 2));
-        
+
         const smileRatio = lipWidth / lipHeight;
         console.log(`👄 [Smile Ratio Scan]: ${smileRatio.toFixed(2)}`);
 
@@ -550,8 +550,8 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
       } else {
         console.log("⚠️ [Config Error] Missing mouth keys for smile evaluation.");
       }
-    } 
-    
+    }
+
     else if (currentChallenge === "turn") {
       // MLKit tracks face orientation using pitch, roll, and yaw angles natively
       console.log(`📐 [Head Yaw Scan]: ${primaryFace.yawAngle?.toFixed(2)}°`);
@@ -573,41 +573,43 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
     // is selected to pass through the heavy TFLite models.
     console.log("🚦 [GATE PASSED] -> Liveness confirmed via MediaPipe! Isolate this single frame for TFLite inference.");
 
-    const bounding = primaryFace.bounds; 
+    const bounding = primaryFace.bounds;
     if (!bounding) {
       return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "Invalid face bounds" };
     }
 
-    let cropX = bounding.x;
-    let cropY = bounding.y;
-    let cropWidth = bounding.width;
-    let cropHeight = bounding.height;
+    // 🎯 FIX: Dynamic Face Tracking Crop (Tight Bounding)
+    // We map the MLKit portrait bounds back to the Landscape sensor buffer.
+    let centerX = bounding.x + bounding.width / 2;
+    let centerY = bounding.y + bounding.height / 2;
 
-    // 🎯 FIX: Coordinate Alignment & Scaling Space
-    // MLKit often returns bounding boxes relative to a Portrait view (e.g. 1080x1920).
-    // The raw camera frame buffer is typically Landscape on Android (e.g. 1920x1080).
-    console.log(`📏 [Scale Check] Raw Frame: ${frame.width}x${frame.height}. Original Bounds: x=${cropX.toFixed(1)}, y=${cropY.toFixed(1)}, w=${cropWidth.toFixed(1)}, h=${cropHeight.toFixed(1)}`);
+    if (frame.width > frame.height) {
+      // Landscape sensor mapping (Swap axes)
+      let temp = centerX;
+      centerX = centerY;
+      centerY = temp;
 
-    // If the frame is Landscape but the bounds exceed the frame's height, they are likely swapped.
-    if (frame.width > frame.height && (cropY + cropHeight > frame.height)) {
-      console.log("🔄 [Coordinate Mapper] Swapping axes to align Portrait MLKit bounds with Landscape Sensor buffer.");
-      cropX = bounding.y;
-      cropY = bounding.x;
-      cropWidth = bounding.height;
-      cropHeight = bounding.width;
-
-      // Handle front camera mirroring (if X needs to be flipped on the Landscape axis)
-      // Uncomment below if the thumbnail is cropping the opposite side of the screen
-      // cropY = frame.height - (bounding.x + bounding.width);
+      // Front cameras typically read the sensor such that the top of the phone 
+      // maps to the right edge of the landscape buffer. (Flip X)
+      centerX = frame.width - centerX;
     }
 
-    // 🎯 CLAMPING: Prevent C++ native crashes from out-of-bounds crop areas
+    // Create a tight square crop around the face with a 30% margin for hair/chin
+    const faceSize = Math.floor(Math.max(bounding.width, bounding.height) * 1.3);
+
+    let cropX = Math.floor(centerX - faceSize / 2);
+    let cropY = Math.floor(centerY - faceSize / 2);
+    let cropWidth = faceSize;
+    let cropHeight = faceSize;
+
+    // Clamp out-of-bounds to prevent native crashes
     cropX = Math.max(0, cropX);
     cropY = Math.max(0, cropY);
     cropWidth = Math.min(cropWidth, frame.width - cropX);
     cropHeight = Math.min(cropHeight, frame.height - cropY);
-    console.log(`✂️ [Final Crop Coordinates] x=${cropX.toFixed(1)}, y=${cropY.toFixed(1)}, w=${cropWidth.toFixed(1)}, h=${cropHeight.toFixed(1)}`);
-        
+
+    console.log(`📏 [Tight Crop] Tracked Face at Center: (${centerX}, ${centerY}), Size: ${faceSize}. Final Crop: x=${cropX}, y=${cropY}`);
+
     // // ✂️ STEP 3: RESIZE FOR MINIFASNET ANTI-SPOOFING (80x80)
     // console.log("✂️ [Crop 1/2] Resizing target frame region to 112x112 for Anti-Spoofing...");
     // const croppedFasBuffer = resizePlugin(frame, {
@@ -646,19 +648,19 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
 
     console.log("🧠 [Inference 2/2] Extracting Face Vector via Synchronous MobileFaceNet...");
     const mobileFaceModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
-    
+
     // 🎯 FIX: Correctly unpack the uint8 bytes BEFORE casting to Float32. 
     // Directly casting an ArrayBuffer to Float32Array interprets 4 pixels as 1 junk memory float!
     const uint8Image = new Uint8Array(croppedFaceNetBuffer.buffer);
     const faceNetFloatArray = new Float32Array(uint8Image.length);
     for (let i = 0; i < uint8Image.length; i++) {
-      faceNetFloatArray[i] = (uint8Image[i] - 127.5) / 128.0;    
+      faceNetFloatArray[i] = (uint8Image[i] - 127.5) / 128.0;
     }
     const visualCropUri = convertFloatArrayToBmpUri(faceNetFloatArray, 112, 112);
     const embeddingOutput = mobileFaceModel.runSync([faceNetFloatArray.buffer]);
 
 
-    const currentFaceDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[]; 
+    const currentFaceDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[];
     console.log("   └─ Vector Generation Complete! Created matrix array length:", currentFaceDescriptor.length); // 128 elements
 
     // 🎯 STEP 5: COSINE SIMILARITY EVALUATION
@@ -703,12 +705,12 @@ export function enrollFaceFrame(input: EnrollmentInput) {
   }
 
   try {
-    
+
     console.log("🚀 [Bridge Executing] Invoking faceDetectorPlugin.detectFaces...");
-    
+
     // 🎯 Calling the direct JSI scanning engine method on the passed object
     const faces = faceDetectorPlugin.detectFaces(frame);
-    
+
     console.log("🛰️ [Detector Output] Faces scanned array count:", faces ? faces.length : 0);
 
     if (!faces || faces.length === 0) {
@@ -717,27 +719,35 @@ export function enrollFaceFrame(input: EnrollmentInput) {
     }
 
     const bounding = faces[0].bounds;
-    let cropX = bounding.x;
-    let cropY = bounding.y;
-    let cropWidth = bounding.width;
-    let cropHeight = bounding.height;
-
-    console.log(`📏 [Enroll Scale Check] Raw Frame: ${frame.width}x${frame.height}. Original Bounds: x=${cropX.toFixed(1)}, y=${cropY.toFixed(1)}, w=${cropWidth.toFixed(1)}, h=${cropHeight.toFixed(1)}`);
-
-    if (frame.width > frame.height && (cropY + cropHeight > frame.height)) {
-      console.log("🔄 [Enroll Coordinate Mapper] Swapping axes to align Portrait MLKit bounds with Landscape Sensor buffer.");
-      cropX = bounding.y;
-      cropY = bounding.x;
-      cropWidth = bounding.height;
-      cropHeight = bounding.width;
+    if (!bounding) {
+      return { faceDescriptor: [], error: "Invalid face bounds" };
     }
+
+    let centerX = bounding.x + bounding.width / 2;
+    let centerY = bounding.y + bounding.height / 2;
+
+    if (frame.width > frame.height) {
+      let temp = centerX;
+      centerX = centerY;
+      centerY = temp;
+      centerX = frame.width - centerX;
+    }
+
+    const faceSize = Math.floor(Math.max(bounding.width, bounding.height) * 1.3);
+
+    let cropX = Math.floor(centerX - faceSize / 2);
+    let cropY = Math.floor(centerY - faceSize / 2);
+    let cropWidth = faceSize;
+    let cropHeight = faceSize;
 
     cropX = Math.max(0, cropX);
     cropY = Math.max(0, cropY);
     cropWidth = Math.min(cropWidth, frame.width - cropX);
     cropHeight = Math.min(cropHeight, frame.height - cropY);
 
-    console.log("✂️ [Crop Pass] Found face bounds. Commencing 112x112 image downsampling matrix extraction...");
+    console.log(`📏 [Enroll Tight Crop] Tracked Face at Center: (${centerX}, ${centerY}), Size: ${faceSize}. Final Crop: x=${cropX}, y=${cropY}`);
+
+    console.log("✂️ [Crop Pass] Found face. Commencing 112x112 image downsampling matrix extraction from tracked bounds...");
 
     const croppedFaceNetBuffer = resizePlugin(frame, {
       scale: { width: 112, height: 112 },
@@ -748,16 +758,16 @@ export function enrollFaceFrame(input: EnrollmentInput) {
 
     console.log("🧠 [Inference Pass] Feeding raw buffer elements into MobileFaceNet sync matrix execution...");
     const activeModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
-    
+
     // 🎯 FIX: Extract as uint8 first, then normalize to a new Float32Array
     const uint8Image = new Uint8Array(croppedFaceNetBuffer.buffer);
     const faceNetFloatArray = new Float32Array(uint8Image.length);
     for (let i = 0; i < uint8Image.length; i++) {
-      faceNetFloatArray[i] = (uint8Image[i] - 127.5) / 128.0;    
+      faceNetFloatArray[i] = (uint8Image[i] - 127.5) / 128.0;
     }
     const embeddingOutput = activeModel.runSync([faceNetFloatArray.buffer]);
-    
-    
+
+
     const generatedDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[];
     console.log("🎉 [Inference Complete] Array successfully populated. Elements generated:", generatedDescriptor.length);
 

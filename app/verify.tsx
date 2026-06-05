@@ -20,6 +20,10 @@ import type { LivenessStep } from "@/types";
 import { useTensorflowModel } from "react-native-fast-tflite";
 import { NitroModules } from "react-native-nitro-modules";
 import { router } from "expo-router";
+import * as crypto from "expo-crypto";
+
+import { insertAttendanceRecords, countUnsyncedRecords } from "@/lib/db";
+import { useSyncStore } from "@/store/syncStore";
 
 type Outcome = "idle" | "verifying" | "success" | "failed";
 
@@ -44,6 +48,7 @@ export default function Verify() {
     classificationMode: 'all'
   });
   const { resize } = useResizePlugin();
+  const setPendingCount = useSyncStore((s) => s.setPendingCount);
 
   useEffect(() => {
       console.log(
@@ -107,11 +112,37 @@ export default function Verify() {
   //   router.replace("/verify");
   // }, [user]);
 
-  const handleVerificationSuccess = useRunOnJS((result: any) => {
-    console.log("🏆 Match confirmed!");
+  const handleVerificationSuccess = useRunOnJS(async (result: any) => {
+    console.log("🏆 Match confirmed! Saving attendance to secure local database...");
+    
     if (result.diagonise) {
       setCroppedPreview(result.diagonise); // Set preview image path
     }
+    
+    if (user?.id) {
+      try {
+        const newRecord = {
+          id: crypto.randomUUID(),
+          userId: user.id,
+          timestamp: new Date().toISOString(),
+          confidence: result.confidence || 0,
+          livenessConfirmed: result.livenessConfirmed,
+          synced: false
+        };
+
+        // 1. Write safely to SQLite WAL
+        await insertAttendanceRecords([newRecord]);
+        
+        // 2. Refresh the global badge count
+        const pending = await countUnsyncedRecords();
+        setPendingCount(pending);
+
+        console.log("✅ Attendance stored offline successfully. Awaiting network sync.");
+      } catch (err) {
+        console.log("❌ Database Write Error:", err);
+      }
+    }
+
     setOutcome("success");
   }, [user]);
 
@@ -189,9 +220,16 @@ export default function Verify() {
         // Keep the lane locked (isCheckingFrame = true) so no new frames process 
         // while the screen transitions!
       } else if (result.error) {
-          if (result.diagonise) {
-            handleDebugPreview(result.diagonise); // 🎯 FIX: Call via UI thread handler
-          }
+        // 🎯 FIX: Do not halt the entire process just because MLKit is taking an extra frame to calculate landmarks.
+        // Silently loop until the landmarks resolve.
+        if (result.error === "WAITING_FOR_LANDMARKS") {
+          isCheckingFrame.value = false;
+          return;
+        }
+
+        if (result.diagonise) {
+          handleDebugPreview(result.diagonise); // 🎯 FIX: Call via UI thread handler
+        }
         console.log("❌ C++ Thread Error! Teleporting to Failure Handler...");
         
         isCheckingFrame.value = false; // Unlock the lane so they can attempt again
