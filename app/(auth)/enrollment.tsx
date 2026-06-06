@@ -118,10 +118,26 @@ export default function Enrollment() {
   const TypedCameraPreview = CameraPreview as any;
   return (
     <View className="flex-1 bg-black">
+      
       <View className="absolute inset-0 z-10">
         <TypedCameraPreview device={device} hasPermission={hasPermission} isActive={isActive} frameProcessor={frameProcessor} torch={busy ? "on" : "off"}/>
         <FaceOverlay />
       </View>
+
+      {/* =============================================================================
+        ⬅️ FLOATING BACK ARROW (Safe overlay positioned in the top-left corner)
+        ============================================================================= */}
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={() => router.back()} // ◄ Instantly pops screen and goes back safely!
+        className="absolute top-12 left-6 z-50 bg-slate-900/80 px-4 py-2.5 rounded-full border border-slate-800"
+      >
+        <Text className="text-white font-medium text-xs tracking-wider">
+          ← BACK TO MENU
+        </Text>
+      </TouchableOpacity>
+
+      {/* Your Camera & Processing Layers continue down here... */}
 
       {enrollmentPreview && (
         <View className="absolute top-36 right-6 z-50 border-2 border-yellow-500 rounded-2xl overflow-hidden shadow-2xl bg-slate-900 p-2">

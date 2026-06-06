@@ -1,5 +1,6 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
+import { useRouter } from "expo-router";
 import { Text, TouchableOpacity, View, Image } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
@@ -29,6 +30,10 @@ const OUTCOME_MESSAGE: Record<Outcome, string> = {
   failed: "Verification failed. Unknown profile or spoof detected.",
 };
 
+import * as Brightness from "expo-brightness";
+
+
+
 export default function Verify() {
   const { device, hasPermission, isActive } = useCameraSession();
   const user = useAuthStore((s) => s.user);
@@ -42,6 +47,31 @@ export default function Verify() {
   const [step, setStep] = useState<LivenessStep>(config.LIVENESS_STEPS[0]);
   const [croppedPreview, setCroppedPreview] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
+
+  // Put this hook inside your Verify main function block:
+  const initialBrightness = useRef<number>(0.5);
+
+  useEffect(() => {
+    async function runSoftboxLightingEngine() {
+      try {
+        if (outcome === "verifying") {
+          // Capture what brightness the user had so we don't blind them permanently
+          initialBrightness.current = await Brightness.getBrightnessAsync();
+          
+          // Boost ONLY your current application window to absolute 100% maximum power
+          await Brightness.setBrightnessAsync(1.0);
+        } else {
+          // Reset the phone back to normal when checking finishes
+          await Brightness.setBrightnessAsync(initialBrightness.current);
+        }
+      } catch (err) {
+        console.log("⚠️ Window illumination driver failed:", err);
+      }
+    }
+
+    runSoftboxLightingEngine();
+  }, [outcome]);
+
 
   const isCheckingFrame = useSharedValue(false);
   const activeChallenge = useSharedValue<"blink" | "smile" | "turn">("blink");
@@ -127,12 +157,70 @@ export default function Verify() {
   }, [faceDescriptor, boxedMobileFaceModel, isCheckingFrame, activeChallenge, resize, detectFaces]);    
 
   const TypedCameraPreview = CameraPreview as any;
+  const router = useRouter();
+  
   return (
-    <View className="flex-1 bg-black">
+    <View className="flex-1 bg-black relative">
+      
+      {/* 📸 Core Camera View Layer */}
       <View className="absolute inset-0 z-10">
-        <TypedCameraPreview device={device} hasPermission={hasPermission} isActive={isActive} frameProcessor={outcome === "verifying" ? frameProcessor : undefined} torch={outcome === "verifying" ? "on" : "off"}/>
-        <FaceOverlay />
+        <TypedCameraPreview 
+          device={device} 
+          hasPermission={hasPermission} 
+          isActive={isActive} 
+          frameProcessor={outcome === "verifying" ? frameProcessor : undefined} 
+          torch="off" // Keep off for front camera
+        />
+        {/* Hide standard overlay during flash to maximize white light area */}
+        {outcome !== "verifying" && <FaceOverlay />}
       </View>
+
+      {/* =============================================================================
+          💡 OPTION 2: FULL-SCREEN SOFTBOX MASK (Maximum Front-Facing Flash Effect)
+          ============================================================================= */}
+      {outcome === "verifying" && (
+        <View 
+          pointerEvents="none" 
+          className="absolute inset-0 z-20 bg-white flex justify-center items-center"
+        >
+          {/* 🎯 THE HOLE-PUNCH CUTOUT MATRIX:
+            The massive border width (e.g., border-[600px]) paints the entire 
+            screen outside the circle solid white, while the center remains 
+            transparent so the camera stream can capture your face flawlessly.
+          */}
+          <View 
+            className="w-72 h-72 rounded-full border-[600px] border-white bg-transparent absolute"
+            style={{ transform: [{ scale: 1.2 }] }} // Micro-adjust size to fit your framing layout
+          />
+          
+          {/* Optional text indicator for user guidance during the flash */}
+          <Text className="text-slate-800 font-bold tracking-widest text-sm absolute top-24">
+            LOOK HERE • SCANNING LIVENESS
+          </Text>
+        </View>
+      )}
+
+
+      {/* =============================================================================
+        ⬅️ FLOATING BACK ARROW (Safe overlay positioned in the top-left corner)
+        ============================================================================= */}
+      <TouchableOpacity
+        activeOpacity={0.7}
+        onPress={() => router.back()} // ◄ Instantly pops screen and goes back safely!
+        className="absolute top-12 left-6 z-50 bg-slate-900/80 px-4 py-2.5 rounded-full border border-slate-800"
+      >
+        <Text className="text-white font-medium text-xs tracking-wider">
+          ← BACK TO MENU
+        </Text>
+      </TouchableOpacity>
+
+      {/* Your Camera & Processing Layers continue down here... */}
+
+      {/* 🔘 Your Control Buttons & Previews Layer */}
+      <View className="absolute bottom-10 inset-x-0 z-30 px-6">
+        {/* UI Triggers and Outcome Status Layout Cards */}
+      </View>
+
 
       {/* ============================================================================= */}
       {/* 🌟 SPLIT-SCREEN PREVIEW PANELS: ENROLLED BASELINE REFERENCE VS LIVE EVALUATION */}

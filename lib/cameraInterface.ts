@@ -71,7 +71,7 @@ export function convertFloatArrayToBmpUri(floatArray: Float32Array, width: numbe
       // BMP layout structure demands Blue-Green-Red byte alignment order
       bmpBytes[dstIdx]     = b; 
       bmpBytes[dstIdx + 1] = g; 
-      bmpBytes[dstIdx + 2] = r; 
+      bmpBytes[dstIdx + 2] = r;
       
       srcIdx += 3;
       dstIdx += 3;
@@ -223,6 +223,7 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
     for (let i = 0; i < faceNetFloatArray.length; i++) {
       faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
     }
+    
 
     const mobileFaceModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
     const embeddingOutput = mobileFaceModel.runSync([faceNetFloatArray.buffer]);

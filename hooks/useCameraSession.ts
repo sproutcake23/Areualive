@@ -19,7 +19,7 @@ export type CameraSession = {
 // Front camera is used for face verification/enrollment. Permission is requested
 // on mount if not already granted.
 export function useCameraSession(): CameraSession {
-  const device = useCameraDevice("front");
+  const device = useCameraDevice("back");
   const { hasPermission, requestPermission } = useCameraPermission();
   const [isActive, setActive] = useState(true);
 
