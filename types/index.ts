@@ -26,6 +26,7 @@ export type EnrolledUser = {
   id: string;
   name: string;
   enrolledAt: string; // ISO 8601
+  profileImage?: string; // 🔥 ADD THIS LINE to allow the Base64 snapshot string!
 };
 
 // Drives the always-visible sync status badge.

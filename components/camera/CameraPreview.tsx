@@ -88,7 +88,7 @@
 //   );
 // }
 
-import { Camera, type CameraProps } from "react-native-vision-camera";
+import { Camera } from "react-native-vision-camera";
 
 interface PreviewProps {
   device: any;

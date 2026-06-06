@@ -83,4 +83,4 @@ def analyze_mobilefacenet_vectors(model_path):
         print("   Your model works. The issue is purely how pixels are layered via the C++ camera memory stream.")
 
 # Run diagnostic script over your file layout
-analyze_mobilefacenet_vectors("assets/tflite/mobilefacenet_float32.tflite")
+analyze_mobilefacenet_vectors("assets/tflite/w600k_mbf_fixed_float32.tflite")

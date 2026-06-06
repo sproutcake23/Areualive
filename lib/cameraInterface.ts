@@ -1,330 +1,5 @@
-// // THE BRIDGE between App Dev and the AI Model team.
-// //
-// // This is the ONLY file shared across the two ownership zones. App-dev code
-// // calls the exported functions; it never calls model code directly. The AI
-// // Team implements verifyFaceFrame / enrollFaceFrame as Vision Camera Frame
-// // Processor Plugins (native-thread worklets).
-// //
-// // Do not change the function signatures without coordinating both teams and
-// // updating types/index.ts together. See AGENTS.md → The Camera–Model Bridge.
-// import type { Frame } from "react-native-vision-camera";
-
-// import { config } from "@/constants/config";
-
-// export type FaceVerificationInput = {
-//   frame: Frame; // Vision Camera frame (native thread)
-//   enrolledFaceDescriptor: number[]; // stored during enrollment, from MMKV
-// };
-
-// export type FaceVerificationResult = {
-//   isMatch: boolean;
-//   livenessConfirmed: boolean;
-//   confidence: number; // 0.0 – 1.0
-//   livenessStep?: "blink" | "smile" | "turn"; // current liveness challenge state
-//   error?: string;
-// };
-
-// // TODO: AI Team — implement as a Vision Camera Frame Processor Plugin.
-// // This runs on the native thread as a worklet. Do not use async/await here.
-// export function verifyFaceFrame(
-//   input: FaceVerificationInput
-// ): FaceVerificationResult {
-//   "worklet";
-//   // Placeholder — replace with TFLite frame processor plugin.
-//   throw new Error("verifyFaceFrame() not yet implemented by AI Team");
-// }
-
-// export type EnrollmentInput = {
-//   frame: Frame; // single captured frame for enrollment
-// };
-
-// export type EnrollmentResult = {
-//   faceDescriptor: number[]; // embedding — store in MMKV via authStore
-//   error?: string;
-// };
-
-// // TODO: AI Team — implement enrollment frame processing.
-// export function enrollFaceFrame(input: EnrollmentInput): EnrollmentResult {
-//   "worklet";
-//   throw new Error("enrollFaceFrame() not yet implemented by AI Team");
-// }
-
-// // ─── MOCKS (App Dev only — delete once the AI Team plugin lands) ──────────────
-// //
-// // These let us build and test UI before the model exists. They are plain async
-// // functions, NOT worklets — never call them from a frame processor. They take no
-// // Frame because there is nothing to process yet. See AGENTS.md → Coordination.
-
-// export async function mockVerifyFace(): Promise<FaceVerificationResult> {
-//   await new Promise((resolve) =>
-//     setTimeout(resolve, config.MOCK_INFERENCE_DELAY_MS)
-//   );
-//   return {
-//     isMatch: true,
-//     livenessConfirmed: true,
-//     confidence: 0.97,
-//     livenessStep: "blink",
-//   };
-// }
-
-// export async function mockEnrollFace(): Promise<EnrollmentResult> {
-//   await new Promise((resolve) =>
-//     setTimeout(resolve, config.MOCK_INFERENCE_DELAY_MS)
-//   );
-//   // A fake 128-dimension descriptor so storage/enrollment flows can be exercised.
-//   return {
-//     faceDescriptor: Array.from({ length: 128 }, () => 0),
-//   };
-// }
-
-// import type { TensorflowModel } from "react-native-fast-tflite";
-// import type { Frame } from "react-native-vision-camera";
-
-// // =============================================================================
-// // 🧠 GLOBAL NATIVE AI INTERPRETERS
-// // =============================================================================
-
-// let miniFasNetInterpreter: TensorflowModel | null = null;
-// let mobileFaceNetInterpreter: TensorflowModel | null = null;
-
-// export function initializeBridgeModels(fasModel: TensorflowModel, faceNetModel: TensorflowModel) {
-//   miniFasNetInterpreter = fasModel;
-//   mobileFaceNetInterpreter = faceNetModel;
-// }
-
-// // =============================================================================
-// // 🗺️ EXPORTED TYPE DEFINITIONS
-// // =============================================================================
-
-// export type FaceVerificationInput = {
-//   frame: Frame;
-//   enrolledFaceDescriptor: number[];
-//   currentChallenge: "blink" | "smile" | "turn";
-//   // 🎯 PASS NATIVE RESIZE AND DETECTOR PLUGINS CONTEXT FROM THE UI COMPONENT
-//   resizePlugin: any;
-//   faceDetectorPlugin: any;
-// };
-
-// export type FaceVerificationResult = {
-//   isMatch: boolean;
-//   livenessConfirmed: boolean;
-//   confidence: number;
-//   livenessStep?: "blink" | "smile" | "turn";
-//   error?: string;
-// };
-
-// export type EnrollmentInput = {
-//   frame: Frame;
-//   resizePlugin: any;
-//   faceDetectorPlugin: any;
-// };
-
-// export type EnrollmentResult = {
-//   faceDescriptor: number[];
-//   error?: string;
-// };
-
-// // =============================================================================
-// // ⚡ INTERNAL NATIVE MATH HEURISTICS (Worklet Validated)
-// // =============================================================================
-
-// function calculateEAR(p1: any, p2: any, p3: any, p4: any, p5: any, p6: any): number {
-//   "worklet";
-//   const v1 = Math.sqrt(Math.pow(p2.x - p6.x, 2) + Math.pow(p2.y - p6.y, 2));
-//   const v2 = Math.sqrt(Math.pow(p3.x - p5.x, 2) + Math.pow(p3.y - p5.y, 2));
-//   const h = Math.sqrt(Math.pow(p1.x - p4.x, 2) + Math.pow(p1.y - p4.y, 2));
-//   return (v1 + v2) / (2.0 * h);
-// }
-
-// function calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
-//   "worklet";
-//   let dotProduct = 0.0;
-//   let normA = 0.0;
-//   let normB = 0.0;
-//   for (let i = 0; i < vecA.length; i++) {
-//     dotProduct += vecA[i] * vecB[i];
-//     normA += vecA[i] * vecA[i];
-//     normB += vecB[i] * vecB[i];
-//   }
-//   if (normA === 0 || normB === 0) return 0;
-//   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
-// }
-
-// // =============================================================================
-// // 🚀 ACTIVE FRAME PROCESSING PIPELINE
-// // =============================================================================
-
-// export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationResult {
-//   "worklet";
-  
-//   if (!miniFasNetInterpreter || !mobileFaceNetInterpreter) {
-//     return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "AI Interpreters not initialized" };
-//   }
-
-//   try {
-//     const { frame, enrolledFaceDescriptor, currentChallenge, resizePlugin, faceDetectorPlugin } = input;
-
-//     // 🎯 STEP 1: INVOKE THE FACE DETECTOR WORKLET DIRECTLY PASSED FROM COMPONENT
-//     const faces = faceDetectorPlugin(frame); 
-//     if (!faces || faces.length === 0) {
-//       return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "No face detected" };
-//     }
-    
-//     const primaryFace = faces[0];
-//     const landmarks = primaryFace.landmarks; 
-
-//     // 🎯 STEP 2: RUN HEURISTIC MATH CONTROLLER FOR LIVENESS CHALLENGES
-//     let challengePassed = false;
-
-//     if (currentChallenge === "blink") {
-//       const leftEAR = calculateEAR(landmarks.leftEyeOuter, landmarks.leftEyeTop, landmarks.leftEyeBottom, landmarks.leftEyeInner, landmarks.leftEyeBottom, landmarks.leftEyeTop);
-//       const rightEAR = calculateEAR(landmarks.rightEyeInner, landmarks.rightEyeTop, landmarks.rightEyeBottom, landmarks.rightEyeOuter, landmarks.rightEyeBottom, landmarks.rightEyeTop);
-//       const averageEAR = (leftEAR + rightEAR) / 2.0;
-      
-//       if (averageEAR < 0.22) challengePassed = true;
-//     } 
-    
-//     else if (currentChallenge === "smile") {
-//       const leftCorner = landmarks.mouthLeft;
-//       const rightCorner = landmarks.mouthRight;
-//       const topLip = landmarks.noseBase; // Fallback relative calculation point
-//       const bottomLip = landmarks.mouthBottom;
-      
-//       const lipWidth = Math.sqrt(Math.pow(rightCorner.x - leftCorner.x, 2) + Math.pow(rightCorner.y - leftCorner.y, 2));
-//       const lipHeight = Math.sqrt(Math.pow(bottomLip.y - topLip.y, 2) + Math.pow(bottomLip.x - topLip.x, 2));
-      
-//       if ((lipWidth / lipHeight) > 3.2) challengePassed = true;
-//     } 
-    
-//     else if (currentChallenge === "turn") {
-//       // Evaluate face angle orientation directly using the plugin's built-in orientation calculations
-//       if (Math.abs(primaryFace.yawAngle) > 18) challengePassed = true;
-//     }
-
-//     if (!challengePassed) {
-//       return { isMatch: false, livenessConfirmed: false, confidence: 0, livenessStep: currentChallenge };
-//     }
-
-//     // 🎯 STEP 3: BOUNDS EXTRACTION & CROPPING RESIZE FOR MINIFASNET ANTI-SPOOFING (80x80)
-//     const bounding = primaryFace.bounds; 
-//     if (!bounding) {
-//       return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "Invalid face bounds" };
-//     }
-
-//     // Explicit coordinate scaling 
-//     const x = bounding.x;
-//     const y = bounding.y;
-//     const width = bounding.width;
-//     const height = bounding.height;
-        
-//     const croppedFasBuffer = resizePlugin(frame, {
-//       scale: { width: 80, height: 80 }, // 🎯 FIXED: Correct model specifications
-//       crop: { x, y, width, height },
-//       pixelFormat: 'rgb',
-//       dataType: 'uint8'
-//     });
-
-//     const fasOutput = miniFasNetInterpreter.runSync([croppedFasBuffer.buffer]);
-//     const realFaceProbability = new Float32Array(fasOutput[0])[1]; 
-
-//     if (realFaceProbability < 0.85) {
-//       return { isMatch: false, livenessConfirmed: true, confidence: 0, error: "Spoof attack detected (FAS failure)" };
-//     }
-
-//     // 🎯 STEP 4: FEATURE EXTRACTION VIA MOBILEFACENET (112x112)
-//     const croppedFaceNetBuffer = resizePlugin(frame, {
-//       scale: { width: 112, height: 112 },
-//       crop: { x, y, width, height },
-//       pixelFormat: 'rgb',
-//       dataType: 'uint8'
-//     });
-
-//     const embeddingOutput = mobileFaceNetInterpreter.runSync([croppedFaceNetBuffer.buffer]);
-//     const currentFaceDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[]; 
-
-//     // 🎯 STEP 5: COSINE SIMILARITY EVALUATION
-//     const similarityScore = calculateCosineSimilarity(currentFaceDescriptor, enrolledFaceDescriptor);
-//     const IS_MATCH_THRESHOLD = 0.78;
-
-//     return {
-//       isMatch: similarityScore >= IS_MATCH_THRESHOLD,
-//       livenessConfirmed: true,
-//       confidence: similarityScore,
-//       livenessStep: currentChallenge
-//     };
-
-//   } catch (err: any) {
-//     return { isMatch: false, livenessConfirmed: false, confidence: 0, error: err.message || "Inference error" };
-//   }
-// }
-
-// export function enrollFaceFrame(input: EnrollmentInput): EnrollmentResult {
-//   "worklet";
-
-//   if (!mobileFaceNetInterpreter) {
-//     return { faceDescriptor: [], error: "MobileFaceNet engine offline" };
-//   }
-
-//   try {
-//     const { frame, resizePlugin, faceDetectorPlugin } = input;
-    
-//     const faces = faceDetectorPlugin(frame);
-//     if (!faces || faces.length === 0) {
-//       return { faceDescriptor: [], error: "No target face found for enrollment" };
-//     }
-
-//     const bounding = faces[0].bounds;
-//     const croppedFaceNetBuffer = resizePlugin(frame, {
-//       scale: { width: 112, height: 112 },
-//       crop: { x: bounding.x, y: bounding.y, width: bounding.width, height: bounding.height },
-//       pixelFormat: 'rgb',
-//       dataType: 'uint8'
-//     });
-
-//     const embeddingOutput = mobileFaceNetInterpreter.runSync([croppedFaceNetBuffer.buffer]);
-//     const generatedDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[];
-
-//     return {
-//       faceDescriptor: generatedDescriptor
-//     };
-
-//   } catch (err: any) {
-//     return { faceDescriptor: [], error: err.message || "Enrollment processing failed" };
-//   }
-// }
-
-// // ─── MOCKS REMAIN UNCHANGED FOR CLEAN BACKWARDS COMPATIBILITY ──────────────
-// export async function mockVerifyFace(): Promise<FaceVerificationResult> {
-//   return { isMatch: true, livenessConfirmed: true, confidence: 0.97, livenessStep: "blink" };
-// }
-
-// export async function mockEnrollFace(): Promise<EnrollmentResult> {
-//   return { faceDescriptor: Array.from({ length: 128 }, () => 0) };
-// }
-
 import type { TensorflowModel } from "react-native-fast-tflite";
 import type { Frame } from "react-native-vision-camera";
-
-// =============================================================================
-// 🧠 GLOBAL NATIVE AI INTERPRETERS
-// =============================================================================
-
-// 🎯 Extend the TypeScript global interface so it doesn't throw a compilation warning
-let miniFasNetInterpreter: TensorflowModel | null = null;
-let mobileFaceNetInterpreter: TensorflowModel | null = null;
-
-
-export function initializeBridgeModels(fasModel: TensorflowModel, faceNetModel: TensorflowModel) {
-  // 🛰️ Bind directly to the global engine context
-  miniFasNetInterpreter = fasModel;
-  mobileFaceNetInterpreter = faceNetModel;
-  
-  console.log("🧠 [JSI Bridge Memory Bind] Interpreters successfully mapped and stable!");
-}
-
-// =============================================================================
-// 🗺️ EXPORTED TYPE DEFINITIONS
-// =============================================================================
 
 export type FaceVerificationInput = {
   frame: Frame;
@@ -334,6 +9,7 @@ export type FaceVerificationInput = {
   faceDetectorPlugin: any;
   boxedAntiSpoofInterpreter: any;
   boxedMobileFaceInterpreter: any;
+  user: any;
 };
 
 export type FaceVerificationResult = {
@@ -342,7 +18,7 @@ export type FaceVerificationResult = {
   confidence: number;
   livenessStep?: "blink" | "smile" | "turn";
   error?: string;
-  diagonise?: any;
+  diagonise?: string;
 };
 
 export type EnrollmentInput = {
@@ -355,9 +31,13 @@ export type EnrollmentInput = {
 export type EnrollmentResult = {
   faceDescriptor: number[];
   error?: string;
+  diagnose?: string;
 };
 
-function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, height: number): string {
+// =============================================================================
+// 🎯 CRITICAL CRASH FIX: WORKLET-SAFE BASE64 IMAGE GENERATOR
+// =============================================================================
+export function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, height: number): string {
   "worklet";
   
   const padding = (4 - ((width * 3) % 4)) % 4;
@@ -373,9 +53,9 @@ function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, heig
   view.setUint32(10, 54, true);
   view.setUint32(14, 40, true);
   view.setUint32(18, width, true);
-  view.setUint32(22, -height, true); // Keep top-to-bottom orientation sharp
+  view.setUint32(22, -height, true); // Top-to-bottom orientation correction
   view.setUint16(26, 1, true);
-  view.setUint16(28, 24, true); // 24-bit RGB
+  view.setUint16(28, 24, true); // 24-bit RGB Channel Layout
   view.setUint32(34, pixelDataSize, true);
 
   const bmpBytes = new Uint8Array(buffer, 54);
@@ -384,12 +64,11 @@ function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, heig
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      // 🎯 Reverse normalization math: Convert (-1.0 -> 1.0) back to (0 -> 255)
       let r = Math.max(0, Math.min(255, Math.floor(floatArray[srcIdx] * 128.0 + 127.5)));
       let g = Math.max(0, Math.min(255, Math.floor(floatArray[srcIdx + 1] * 128.0 + 127.5)));
       let b = Math.max(0, Math.min(255, Math.floor(floatArray[srcIdx + 2] * 128.0 + 127.5)));
 
-      // BMP expects channels in BGR layout
+      // BMP layout structure demands Blue-Green-Red byte alignment order
       bmpBytes[dstIdx]     = b; 
       bmpBytes[dstIdx + 1] = g; 
       bmpBytes[dstIdx + 2] = r; 
@@ -400,226 +79,178 @@ function convertFloatArrayToBmpUri(floatArray: Float32Array, width: number, heig
     dstIdx += padding;
   }
 
-  // Convert binary array workspace to a base64 string
-  let binary = "";
+  // Pure mathematical Base64 execution string converter. Bypasses crashing UI 'btoa' global
+  const chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
   const totalBytes = new Uint8Array(buffer);
-  for (let i = 0; i < totalBytes.length; i++) {
-    binary += String.fromCharCode(totalBytes[i]);
+  let base64 = "";
+  
+  for (let i = 0; i < totalBytes.length; i += 3) {
+    const b1 = totalBytes[i];
+    const b2 = i + 1 < totalBytes.length ? totalBytes[i + 1] : 0;
+    const b3 = i + 2 < totalBytes.length ? totalBytes[i + 2] : 0;
+    
+    const enc1 = b1 >> 2;
+    const enc2 = ((b1 & 3) << 4) | (b2 >> 4);
+    const enc3 = i + 1 < totalBytes.length ? ((b2 & 15) << 2) | (b3 >> 6) : 64;
+    const enc4 = i + 2 < totalBytes.length ? b3 & 63 : 64;
+    
+    base64 += chars.charAt(enc1) + chars.charAt(enc2) + 
+              (enc3 === 64 ? "=" : chars.charAt(enc3)) + 
+              (enc4 === 64 ? "=" : chars.charAt(enc4));
   }
-  return `data:image/bmp;base64,${btoa(binary)}`;
-}
-// =============================================================================
-// ⚡ INTERNAL NATIVE MATH HEURISTICS (Worklet Validated)
-// =============================================================================
 
-function calculateEAR(p1: any, p2: any, p3: any, p4: any, p5: any, p6: any): number {
+  return `data:image/bmp;base64,${base64}`;
+}
+
+function calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
   "worklet";
-  const v1 = Math.sqrt(Math.pow(p2.x - p6.x, 2) + Math.pow(p2.y - p6.y, 2));
-  const v2 = Math.sqrt(Math.pow(p3.x - p5.x, 2) + Math.pow(p3.y - p5.y, 2));
-  const h = Math.sqrt(Math.pow(p1.x - p4.x, 2) + Math.pow(p1.y - p4.y, 2));
-  return (v1 + v2) / (2.0 * h);
-}
-
-  function calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
-    "worklet";
-    let dotProduct = 0.0;
-    let normA = 0.0;
-    let normB = 0.0;
-    for (let i = 0; i < vecA.length; i++) {
-      dotProduct += vecA[i] * vecB[i];
-      normA += vecA[i] * vecA[i];
-      normB += vecB[i] * vecB[i];
-    }
-    if (normA === 0 || normB === 0) return 0;
-    return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+  let dotProduct = 0.0;
+  let normA = 0.0;
+  let normB = 0.0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
 // =============================================================================
-// 🚀 ACTIVE FRAME PROCESSING PIPELINE
+// 🔓 1. LIVE VERIFICATION FUNCTION (WITH DETAILED TELEMETRY LOGS)
 // =============================================================================
-
 export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationResult {
   "worklet";
 
-  const { frame, enrolledFaceDescriptor, currentChallenge, resizePlugin, faceDetectorPlugin, boxedAntiSpoofInterpreter,boxedMobileFaceInterpreter } = input;
-  console.log("🔍 [verifyFaceFrame] 1. Function entered successfully.");
+  const { frame, enrolledFaceDescriptor, currentChallenge, resizePlugin, faceDetectorPlugin, boxedMobileFaceInterpreter } = input;
 
-  if (!boxedAntiSpoofInterpreter || !boxedMobileFaceInterpreter) {
-    return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "AI Interpreters not initialized" };
+  if (!boxedMobileFaceInterpreter) {
+    return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "AI Models uninitialized" };
   }
 
   try {
-
-    // 📸 TRACE 1: Stream Entry Point (Runs at 30-60 FPS for MediaPipe tracking)
-    // Uncomment the line below if you want to see the raw stream fire
-    // console.log("📷 [Stream Entry] Passing raw frame ID:", frame.toString(), "to MediaPipe Face Detector.");
-
-    // 🎯 STEP 1: INVOKE THE FACE DETECTOR WORKLET
     const faces = faceDetectorPlugin.detectFaces(frame); 
-    console.log("🔍 [verifyFaceFrame] 2. Face Detector complete. Faces found:", faces?.length);
-
     if (!faces || faces.length === 0 || faces[0] == null) {
-      console.log("🔍 [verifyFaceFrame] 🛑 No faces in this frame. Exiting early.");
       return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "No face detected" };
     }
     
     const primaryFace = faces[0];
-
-// 🎯 DEFENSIVE PRODUCTION GUARD
-    if (!primaryFace.landmarks || typeof primaryFace.landmarks !== 'object' || Object.keys(primaryFace.landmarks).length === 0) {
-      console.log("🔍 [verifyFaceFrame] 🚧 Frame skipped: Bounding box tracked, but waiting for facial vector landmarks to resolve...");
-      return { 
-        isMatch: false, 
-        livenessConfirmed: false, 
-        confidence: 0, 
-        error: "WAITING_FOR_LANDMARKS" // Returning a specific error allows the frame processor to loop cleanly without breaking layout states
-      };
+    if (!primaryFace.landmarks || Object.keys(primaryFace.landmarks).length === 0) {
+      return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "WAITING_FOR_LANDMARKS" };
     }
-    
-    const landmarks = primaryFace.landmarks; 
-    console.log("🔍 [verifyFaceFrame] 3. Primary face landmark check passing... MLKit Mapped.");
 
-    // 🎯 STEP 2: RUN HEURISTIC MATH CONTROLLER FOR LIVENESS CHALLENGES
+    // --- TELEMETRY LOG 1: RAW LIVENESS PROBABILITIES FROM HARDWARE ---
+    const leftOpenProb = primaryFace.leftEyeOpenProbability ?? -1;
+    const rightOpenProb = primaryFace.rightEyeOpenProbability ?? -1;
+    const smileProb = primaryFace.smilingProbability ?? -1; // Built-in MLKit classification helper
+    const headYaw = primaryFace.yawAngle ?? 0;
+
+    console.log(
+      "📊 [Telemetry Loop - Raw Liveness Metrics]:",
+      `\n  ├─ Left Eye Open Prob:  ${leftOpenProb.toFixed(4)}`,
+      `\n  ├─ Right Eye Open Prob: ${rightOpenProb.toFixed(4)}`,
+      `\n  ├─ Smile Probability:   ${smileProb.toFixed(4)}`,
+      `\n  └─ Head Yaw Rotation:   ${headYaw.toFixed(2)}°`
+    );
+
+    // Heuristic Liveness Evaluators
     let challengePassed = false;
-
     if (currentChallenge === "blink") {
-      // 🔏 MLKit Extraction Rule: Pull the probabilities from the primary face object body, NOT landmarks!
-      const leftOpenProb = primaryFace.leftEyeOpenProbability;
-      const rightOpenProb = primaryFace.rightEyeOpenProbability;
-      
-      console.log(`👁️ [Blink Tracking Scan] Left Open: ${leftOpenProb?.toFixed(2)}, Right Open: ${rightOpenProb?.toFixed(2)}`);
-
-      if (leftOpenProb != null && rightOpenProb != null) {
-        const averageOpenProbability = (leftOpenProb + rightOpenProb) / 2.0;
-        
-        // If the average open probability drops below 0.25, the user has closed their eyes!
-        if (averageOpenProbability < 0.25) {
-          challengePassed = true;
-          console.log("🎉 [Liveness Match] Blink registered successfully!");
-        }
-      } else {
-        console.log("⚠️ [Config Error] leftEyeOpenProbability is missing. Ensure classificationMode: 'all' is set in your hook config.");
-      }
-    } 
-    
-    else if (currentChallenge === "smile") {
-      // 🔏 MLKit Extraction Rule: Use the exact discovered capitalized keys!
-      const leftCorner = landmarks.MOUTH_LEFT;
-      const rightCorner = landmarks.MOUTH_RIGHT;
-      const topLip = landmarks.NOSE_BASE; 
-      const bottomLip = landmarks.MOUTH_BOTTOM;
-      
-      if (leftCorner && rightCorner && topLip && bottomLip) {
-        const lipWidth = Math.sqrt(Math.pow(rightCorner.x - leftCorner.x, 2) + Math.pow(rightCorner.y - leftCorner.y, 2));
-        const lipHeight = Math.sqrt(Math.pow(bottomLip.y - topLip.y, 2) + Math.pow(bottomLip.x - topLip.x, 2));
-        
-        const smileRatio = lipWidth / lipHeight;
-        console.log(`👄 [Smile Ratio Scan]: ${smileRatio.toFixed(2)}`);
-
-        if (smileRatio > 1.05) { // Adjusted for MLKit flat anchors
-          challengePassed = true;
-          console.log("🎉 [Liveness Match] Smile registered successfully!");
-        }
-      } else {
-        console.log("⚠️ [Config Error] Missing mouth keys for smile evaluation.");
-      }
-    } 
-    
-    else if (currentChallenge === "turn") {
-      // MLKit tracks face orientation using pitch, roll, and yaw angles natively
-      console.log(`📐 [Head Yaw Scan]: ${primaryFace.yawAngle?.toFixed(2)}°`);
-      if (primaryFace.yawAngle != null && Math.abs(primaryFace.yawAngle) > 10) {
+      if (leftOpenProb !== -1 && rightOpenProb !== -1 && (leftOpenProb + rightOpenProb) / 2.0 < 0.25) {
         challengePassed = true;
-        console.log("🎉 [Liveness Match] Head turn registered successfully!");
       }
+    } else if (currentChallenge === "smile") {
+      const lm = primaryFace.landmarks;
+      if (lm.MOUTH_LEFT && lm.MOUTH_RIGHT && lm.NOSE_BASE && lm.MOUTH_BOTTOM) {
+        const lipWidth = Math.sqrt(Math.pow(lm.MOUTH_RIGHT.x - lm.MOUTH_LEFT.x, 2) + Math.pow(lm.MOUTH_RIGHT.y - lm.MOUTH_LEFT.y, 2));
+        const lipHeight = Math.sqrt(Math.pow(lm.MOUTH_BOTTOM.y - lm.NOSE_BASE.y, 2) + Math.pow(lm.MOUTH_BOTTOM.x - lm.NOSE_BASE.x, 2));
+        // Challenge verification fallback check if geometry scales out
+        if (lipWidth / lipHeight > 1.05 || smileProb > 0.70) challengePassed = true;
+      }
+    } else if (currentChallenge === "turn") {
+      if (Math.abs(headYaw) > 10) challengePassed = true;
     }
 
-    // 🚧 TOLL BOOTH GATE: If the user hasn't completed the liveness challenge yet, 
-    // we stop execution right here. TFLite models are never called!
     if (!challengePassed) {
-      console.log("🔍 [verifyFaceFrame] 3. Failed to pass the challenge...");
       return { isMatch: false, livenessConfirmed: false, confidence: 0, livenessStep: currentChallenge };
     }
 
-    // 🛑 🏁 CRITICAL JUNCTION: The challenge just passed!
-    // Out of hundreds of continuous streaming video frames, THIS specific single frame 
-    // is selected to pass through the heavy TFLite models.
-    console.log("🚦 [GATE PASSED] -> Liveness confirmed via MediaPipe! Isolate this single frame for TFLite inference.");
+    console.log(`🚦 [LIVENESS PASSED] -> Challenge "${currentChallenge}" satisfied! Slicing tensor matrices...`);
 
-    const bounding = primaryFace.bounds; 
-    if (!bounding) {
-      return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "Invalid face bounds" };
-    }
+    // --- SEAMLESS COORDINATE TRANSLATION MATRIX ---
+    const bounding = primaryFace.bounds;
+    const frameWidth = frame.width;
+    const frameHeight = frame.height;
+    const isPortrait = frame.orientation === 'portrait' || frame.orientation === 'portrait-upside-down';
+    
+    const canvasW = isPortrait ? frameWidth : frameHeight;
+    const canvasH = isPortrait ? frameHeight : frameWidth;
 
-    const x = bounding.x;
-    const y = bounding.y;
-    const width = bounding.width;
-    const height = bounding.height;
-        
-    // // ✂️ STEP 3: RESIZE FOR MINIFASNET ANTI-SPOOFING (80x80)
-    // console.log("✂️ [Crop 1/2] Resizing target frame region to 112x112 for Anti-Spoofing...");
-    // const croppedFasBuffer = resizePlugin(frame, {
-    //   scale: { width: 80, height: 80 }, 
-    //   crop: { x, y, width, height },
-    //   pixelFormat: 'rgb',
-    //   dataType: 'float32'
-    // });
-    // console.log("   └─ Allocated Buffer Bytes:", croppedFasBuffer.buffer.byteLength); // Verify sequence space (19200 bytes)
+    const screenCenterX = bounding.x + bounding.width / 2;
+    const screenCenterY = bounding.y + bounding.height / 2;
 
-    // console.log("🧠 [Inference 1/2] Running Synchronous MiniFASNet C++ Evaluation...");
-    // const antiSpoofModel = boxedAntiSpoofInterpreter.unbox() as TensorflowModel;
-    // const fasFloatArray = new Float32Array(croppedFasBuffer.buffer);
-    // for (let i = 0; i < fasFloatArray.length; i++) {
-    //   fasFloatArray[i] = fasFloatArray[i] / 255.0; // Scales integers down to 0.0 - 1.0 range
-    // }
-    // const fasOutput = antiSpoofModel.runSync([fasFloatArray.buffer]);
+    let sensorCenterX = isPortrait ? Math.floor((screenCenterX / canvasW) * frameWidth) : Math.floor((1.0 - (screenCenterY / canvasH)) * frameWidth);
+    let sensorCenterY = isPortrait ? Math.floor((screenCenterY / canvasH) * frameHeight) : Math.floor((screenCenterX / canvasW) * frameHeight);
 
-    // const realFaceProbability = new Float32Array(fasOutput[0]); 
-    // console.log("   └─ Anti-Spoof Score (Probability face is REAL):", (realFaceProbability[1] * 100).toFixed(2) + "%");
+    const targetAxis = isPortrait ? frameHeight : frameWidth;
+    const sensorFaceSize = Math.floor((Math.max(bounding.width, bounding.height) / canvasH) * targetAxis);
 
-    // if (realFaceProbability[1] < 0.85) {
-    //   console.log("❌ [PIPELINE BLOCKED] Face failed Anti-Spoof verification test.");
-    //   return { isMatch: false, livenessConfirmed: true, confidence: 0, error: "Spoof attack detected (FAS failure)" };
-    // }
+    let sensorCropX = Math.max(0, Math.min(frameWidth - 20, Math.floor(sensorCenterX - sensorFaceSize / 2)));
+    let sensorCropY = Math.max(0, Math.min(frameHeight - 20, Math.floor(sensorCenterY - sensorFaceSize / 2)));
+    let strictSquare = Math.min(Math.max(20, frameWidth - sensorCropX), Math.max(20, frameHeight - sensorCropY), sensorFaceSize);
 
-    // ✂️ STEP 4: FEATURE EXTRACTION VIA MOBILEFACENET (112x112)
-    console.log("✂️ [Crop 2/2] Resizing target frame region to 112x112 for Vector Generation...");
+    // --- TELEMETRY LOG 2: CROP AND IMAGE DIMENSIONS ---
+    console.log(
+      "✂️ [Verify Crop Vector Dimensions]:",
+      `\n  ├─ Source Video Buffer Frame:  ${frameWidth} x ${frameHeight}`,
+      `\n  ├─ Calculated Cropping Window: X:${sensorCropX} Y:${sensorCropY}`,
+      `\n  ├─ Input Crop Dimensions:      W:${strictSquare} x H:${strictSquare}`,
+      `\n  └─ Downsampled Model Tensor:   112 x 112 (RGB Float32)`
+    );
+
     const croppedFaceNetBuffer = resizePlugin(frame, {
       scale: { width: 112, height: 112 },
-      crop: { x, y, width, height },
+      crop: { x: sensorCropX, y: sensorCropY, width: strictSquare, height: strictSquare },
       pixelFormat: 'rgb',
-      dataType: 'float32'
+      dataType: 'float32',
+      rotation: isPortrait ? "0deg" : "270deg", // 🔄 FIX: Rotated 180 degrees back to upright display orientation
+      mirror: true
     });
-    console.log("   └─ Allocated Buffer Bytes:", croppedFaceNetBuffer.buffer.byteLength); // Verify sequence space (37632 bytes)
 
-    
-
-
-    console.log("🧠 [Inference 2/2] Extracting Face Vector via Synchronous MobileFaceNet...");
-    const mobileFaceModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
     const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
+    const visualCropUri = convertFloatArrayToBmpUri(faceNetFloatArray, 112, 112);
+
     for (let i = 0; i < faceNetFloatArray.length; i++) {
       faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
     }
-    const visualCropUri = convertFloatArrayToBmpUri(faceNetFloatArray, 112, 112);
+
+    const mobileFaceModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
     const embeddingOutput = mobileFaceModel.runSync([faceNetFloatArray.buffer]);
-
-
     const currentFaceDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[]; 
-    console.log("   └─ Vector Generation Complete! Created matrix array length:", currentFaceDescriptor.length); // 128 elements
 
-    // 🎯 STEP 5: COSINE SIMILARITY EVALUATION
     const similarityScore = calculateCosineSimilarity(currentFaceDescriptor, enrolledFaceDescriptor);
-    console.log("Enrolled vector", enrolledFaceDescriptor);
-    console.log("Current vector", currentFaceDescriptor);
-    console.log("📊 [Match Calculation] Computed Cosine Similarity against Enrolled User:", similarityScore.toFixed(8));
 
-    const IS_MATCH_THRESHOLD = 0.78;
-    const isMatch = similarityScore >= IS_MATCH_THRESHOLD;
-    console.log(isMatch ? "🎉 [SUCCESS] Biometric Match Confirmed!" : "🔒 [REJECTED] Biometric Face Mismatch.");
+    const firstTenEnrolled = enrolledFaceDescriptor.slice(0, 10);
+    const firstTenCurrent = currentFaceDescriptor.slice(0, 10);
+
+    console.log(
+      "🧬 [Raw Tensor Weights - First 5 Dimensions]:",
+      `\n  ├─ Stored Baseline (Enrolled): [ ${firstTenEnrolled.map(v => v.toFixed(6)).join(", ")} ... ]`,
+      `\n  └─ Live Stream Scan (Current):  [ ${firstTenCurrent.map(v => v.toFixed(6)).join(", ")} ... ]`
+    );
+    
+    // --- TELEMETRY LOG 3: BIOMETRIC SIMILARITY EVALUATION ---
+    console.log(
+      "📊 [Biometric Vector Engine Comparison Output]:",
+      `\n  ├─ Enrolled Descriptor Length:  ${enrolledFaceDescriptor.length} channels`,
+      `\n  ├─ Current Live Vector Length:  ${currentFaceDescriptor.length} channels`,
+      `\n  ├─ Computed Cosine Similarity:   ${similarityScore.toFixed(8)}`,
+      `\n  ├─ Configured Decision Threshold: >= 0.78000000`,
+      `\n  └─ Final Authentication Verdict:  ${similarityScore >= 0.78 ? "🎉 AUTHORIZED MATCH" : "🔒 ACCESS DENIED"}`
+    );
 
     return {
-      isMatch,
+      isMatch: similarityScore >= 0.78,
       livenessConfirmed: true,
       confidence: similarityScore,
       livenessStep: currentChallenge,
@@ -627,70 +258,255 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
     };
 
   } catch (err: any) {
-    console.error("💥 [CRITICAL CRASH] Pipeline failed unexpectedly:", err.message);
-    return { isMatch: false, livenessConfirmed: false, confidence: 0, error: err.message || "Inference error" };
+    return { isMatch: false, livenessConfirmed: false, confidence: 0, error: err.message || "Inference exception" };
   }
 }
 
-
-
-
-
-// Update the internal calls in verifyFaceFrame and enrollFaceFrame:
-export function enrollFaceFrame(input: EnrollmentInput) {
+// =============================================================================
+// 📝 2. PROFILE ENROLLMENT FUNCTION
+// =============================================================================
+export function enrollFaceFrame(input: EnrollmentInput): EnrollmentResult {
   "worklet";
 
   const { frame, resizePlugin, faceDetectorPlugin, boxedMobileFaceInterpreter } = input;
 
-  console.log("🔘 [Bridge Entry] Inside enrollFaceFrame function scope.");
-
   if (!boxedMobileFaceInterpreter) {
-    console.log("❌ [Bridge Error] MobileFaceNet interpreter is null!");
-    return { faceDescriptor: [], error: "MobileFaceNet isntance is undefined in worklet thread" };
+    return { faceDescriptor: [], error: "MobileFaceNet model offline." };
   }
 
   try {
-    
-    console.log("🚀 [Bridge Executing] Invoking faceDetectorPlugin.detectFaces...");
-    
-    // 🎯 Calling the direct JSI scanning engine method on the passed object
     const faces = faceDetectorPlugin.detectFaces(frame);
-    
-    console.log("🛰️ [Detector Output] Faces scanned array count:", faces ? faces.length : 0);
-
     if (!faces || faces.length === 0) {
-      console.log("❌ [Detector Halt] No target face identified in this frame buffer snapshot.");
       return { faceDescriptor: [], error: "No target face found for enrollment" };
     }
 
     const bounding = faces[0].bounds;
-    console.log("✂️ [Crop Pass] Found face bounds. Commencing 112x112 image downsampling matrix extraction...");
+    const frameWidth = frame.width;
+    const frameHeight = frame.height;
+    const isPortrait = frame.orientation === 'portrait' || frame.orientation === 'portrait-upside-down';
+    
+    const canvasW = isPortrait ? frameWidth : frameHeight;
+    const canvasH = isPortrait ? frameHeight : frameWidth;
+
+    const screenCenterX = bounding.x + bounding.width / 2;
+    const screenCenterY = bounding.y + bounding.height / 2;
+
+    let sensorCenterX = isPortrait ? Math.floor((screenCenterX / canvasW) * frameWidth) : Math.floor((1.0 - (screenCenterY / canvasH)) * frameWidth);
+    let sensorCenterY = isPortrait ? Math.floor((screenCenterY / canvasH) * frameHeight) : Math.floor((screenCenterX / canvasW) * frameHeight);
+
+    const targetAxis = isPortrait ? frameHeight : frameWidth;
+    const sensorFaceSize = Math.floor((Math.max(bounding.width, bounding.height) / canvasH) * targetAxis);
+
+    let sensorCropX = Math.max(0, Math.min(frameWidth - 20, Math.floor(sensorCenterX - sensorFaceSize / 2)));
+    let sensorCropY = Math.max(0, Math.min(frameHeight - 20, Math.floor(sensorCenterY - sensorFaceSize / 2)));
+    let strictSquare = Math.min(Math.max(20, frameWidth - sensorCropX), Math.max(20, frameHeight - sensorCropY), sensorFaceSize);
+
+    // --- TELEMETRY LOG: ENROLLMENT SPATIAL CROP METRICS ---
+    console.log(
+      "✂️ [Enrollment Matrix Crop Geometry]:",
+      `\n  ├─ Frame Resolution Space:     ${frameWidth} x ${frameHeight}`,
+      `\n  ├─ Input Crop Dimensions:      W:${strictSquare} x H:${strictSquare}`,
+      `\n  └─ Downsampled Output Tensor:  112 x 112`
+    );
 
     const croppedFaceNetBuffer = resizePlugin(frame, {
       scale: { width: 112, height: 112 },
-      crop: { x: bounding.x, y: bounding.y, width: bounding.width, height: bounding.height },
+      crop: { x: sensorCropX, y: sensorCropY, width: strictSquare, height: strictSquare },
       pixelFormat: 'rgb',
-      dataType: 'float32'
+      dataType: 'float32',
+      rotation: isPortrait ? "0deg" : "270deg", // 🔄 FIX: Rotated 180 degrees back to upright display orientation
+      mirror: true
     });
 
-    console.log("🧠 [Inference Pass] Feeding raw buffer elements into MobileFaceNet sync matrix execution...");
-    const activeModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
     const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
+    const enrollmentPreviewUri = convertFloatArrayToBmpUri(faceNetFloatArray, 112, 112);
+
     for (let i = 0; i < faceNetFloatArray.length; i++) {
       faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
     }
+
+    const activeModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
     const embeddingOutput = activeModel.runSync([faceNetFloatArray.buffer]);
-    
-    
     const generatedDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[];
-    console.log("🎉 [Inference Complete] Array successfully populated. Elements generated:", generatedDescriptor.length);
 
     return {
-      faceDescriptor: generatedDescriptor
+      faceDescriptor: generatedDescriptor,
+      diagnose: enrollmentPreviewUri
     };
 
   } catch (err: any) {
-    console.log("💥 [Bridge Exception] Execution threw a hard native error:", err.message || err);
-    return { faceDescriptor: [], error: err.message || "Enrollment processing failed" };
+    return { faceDescriptor: [], error: err.message || "Enrollment failure" };
   }
 }
+
+// // =============================================================================
+// // 🔓 1. LIVE VERIFICATION FUNCTION
+// // =============================================================================
+// export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationResult {
+//   "worklet";
+
+//   const { frame, enrolledFaceDescriptor, currentChallenge, resizePlugin, faceDetectorPlugin, boxedMobileFaceInterpreter } = input;
+
+//   if (!boxedMobileFaceInterpreter) {
+//     return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "AI Models uninitialized" };
+//   }
+
+//   try {
+//     const faces = faceDetectorPlugin.detectFaces(frame); 
+//     if (!faces || faces.length === 0 || faces[0] == null) {
+//       return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "No face detected" };
+//     }
+    
+//     const primaryFace = faces[0];
+//     if (!primaryFace.landmarks || Object.keys(primaryFace.landmarks).length === 0) {
+//       return { isMatch: false, livenessConfirmed: false, confidence: 0, error: "WAITING_FOR_LANDMARKS" };
+//     }
+
+//     // Heuristic Liveness Evaluators
+//     let challengePassed = false;
+//     if (currentChallenge === "blink") {
+//       const leftOpenProb = primaryFace.leftEyeOpenProbability;
+//       const rightOpenProb = primaryFace.rightEyeOpenProbability;
+//       if (leftOpenProb != null && rightOpenProb != null && (leftOpenProb + rightOpenProb) / 2.0 < 0.25) {
+//         challengePassed = true;
+//       }
+//     } else if (currentChallenge === "smile") {
+//       const lm = primaryFace.landmarks;
+//       if (lm.MOUTH_LEFT && lm.MOUTH_RIGHT && lm.NOSE_BASE && lm.MOUTH_BOTTOM) {
+//         const lipWidth = Math.sqrt(Math.pow(lm.MOUTH_RIGHT.x - lm.MOUTH_LEFT.x, 2) + Math.pow(lm.MOUTH_RIGHT.y - lm.MOUTH_LEFT.y, 2));
+//         const lipHeight = Math.sqrt(Math.pow(lm.MOUTH_BOTTOM.y - lm.NOSE_BASE.y, 2) + Math.pow(lm.MOUTH_BOTTOM.x - lm.NOSE_BASE.x, 2));
+//         if (lipWidth / lipHeight > 1.05) challengePassed = true;
+//       }
+//     } else if (currentChallenge === "turn") {
+//       if (primaryFace.yawAngle != null && Math.abs(primaryFace.yawAngle) > 10) challengePassed = true;
+//     }
+
+//     if (!challengePassed) {
+//       return { isMatch: false, livenessConfirmed: false, confidence: 0, livenessStep: currentChallenge };
+//     }
+
+//     // --- SEAMLESS COORDINATE TRANSLATION MATRIX ---
+//     const bounding = primaryFace.bounds;
+//     const frameWidth = frame.width;
+//     const frameHeight = frame.height;
+//     const isPortrait = frame.orientation === 'portrait' || frame.orientation === 'portrait-upside-down';
+    
+//     const canvasW = isPortrait ? frameWidth : frameHeight;
+//     const canvasH = isPortrait ? frameHeight : frameWidth;
+
+//     const screenCenterX = bounding.x + bounding.width / 2;
+//     const screenCenterY = bounding.y + bounding.height / 2;
+
+//     let sensorCenterX = isPortrait ? Math.floor((screenCenterX / canvasW) * frameWidth) : Math.floor((1.0 - (screenCenterY / canvasH)) * frameWidth);
+//     let sensorCenterY = isPortrait ? Math.floor((screenCenterY / canvasH) * frameHeight) : Math.floor((screenCenterX / canvasW) * frameHeight);
+
+//     const targetAxis = isPortrait ? frameHeight : frameWidth;
+//     const sensorFaceSize = Math.floor((Math.max(bounding.width, bounding.height) / canvasH) * targetAxis);
+
+//     let sensorCropX = Math.max(0, Math.min(frameWidth - 20, Math.floor(sensorCenterX - sensorFaceSize / 2)));
+//     let sensorCropY = Math.max(0, Math.min(frameHeight - 20, Math.floor(sensorCenterY - sensorFaceSize / 2)));
+//     let strictSquare = Math.min(Math.max(20, frameWidth - sensorCropX), Math.max(20, frameHeight - sensorCropY), sensorFaceSize);
+
+//     const croppedFaceNetBuffer = resizePlugin(frame, {
+//       scale: { width: 112, height: 112 },
+//       crop: { x: sensorCropX, y: sensorCropY, width: strictSquare, height: strictSquare },
+//       pixelFormat: 'rgb',
+//       dataType: 'float32',
+//       rotation: isPortrait ? "180deg" : "90deg",
+//       mirror: true
+//     });
+
+//     const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
+//     const visualCropUri = convertFloatArrayToBmpUri(faceNetFloatArray, 112, 112);
+
+//     for (let i = 0; i < faceNetFloatArray.length; i++) {
+//       faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
+//     }
+
+//     const mobileFaceModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
+//     const embeddingOutput = mobileFaceModel.runSync([faceNetFloatArray.buffer]);
+//     const currentFaceDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[]; 
+
+//     const similarityScore = calculateCosineSimilarity(currentFaceDescriptor, enrolledFaceDescriptor);
+    
+//     return {
+//       isMatch: similarityScore >= 0.78,
+//       livenessConfirmed: true,
+//       confidence: similarityScore,
+//       livenessStep: currentChallenge,
+//       diagonise: visualCropUri,
+//     };
+
+//   } catch (err: any) {
+//     return { isMatch: false, livenessConfirmed: false, confidence: 0, error: err.message || "Inference exception" };
+//   }
+// }
+
+// // =============================================================================
+// // 📝 2. PROFILE ENROLLMENT FUNCTION
+// // =============================================================================
+// export function enrollFaceFrame(input: EnrollmentInput): EnrollmentResult {
+//   "worklet";
+
+//   const { frame, resizePlugin, faceDetectorPlugin, boxedMobileFaceInterpreter } = input;
+
+//   if (!boxedMobileFaceInterpreter) {
+//     return { faceDescriptor: [], error: "MobileFaceNet model offline." };
+//   }
+
+//   try {
+//     const faces = faceDetectorPlugin.detectFaces(frame);
+//     if (!faces || faces.length === 0) {
+//       return { faceDescriptor: [], error: "No target face found for enrollment" };
+//     }
+
+//     const bounding = faces[0].bounds;
+//     const frameWidth = frame.width;
+//     const frameHeight = frame.height;
+//     const isPortrait = frame.orientation === 'portrait' || frame.orientation === 'portrait-upside-down';
+    
+//     const canvasW = isPortrait ? frameWidth : frameHeight;
+//     const canvasH = isPortrait ? frameHeight : frameWidth;
+
+//     const screenCenterX = bounding.x + bounding.width / 2;
+//     const screenCenterY = bounding.y + bounding.height / 2;
+
+//     let sensorCenterX = isPortrait ? Math.floor((screenCenterX / canvasW) * frameWidth) : Math.floor((1.0 - (screenCenterY / canvasH)) * frameWidth);
+//     let sensorCenterY = isPortrait ? Math.floor((screenCenterY / canvasH) * frameHeight) : Math.floor((screenCenterX / canvasW) * frameHeight);
+
+//     const targetAxis = isPortrait ? frameHeight : frameWidth;
+//     const sensorFaceSize = Math.floor((Math.max(bounding.width, bounding.height) / canvasH) * targetAxis);
+
+//     let sensorCropX = Math.max(0, Math.min(frameWidth - 20, Math.floor(sensorCenterX - sensorFaceSize / 2)));
+//     let sensorCropY = Math.max(0, Math.min(frameHeight - 20, Math.floor(sensorCenterY - sensorFaceSize / 2)));
+//     let strictSquare = Math.min(Math.max(20, frameWidth - sensorCropX), Math.max(20, frameHeight - sensorCropY), sensorFaceSize);
+
+//     const croppedFaceNetBuffer = resizePlugin(frame, {
+//       scale: { width: 112, height: 112 },
+//       crop: { x: sensorCropX, y: sensorCropY, width: strictSquare, height: strictSquare },
+//       pixelFormat: 'rgb',
+//       dataType: 'float32',
+//       rotation: isPortrait ? "180deg" : "90deg",
+//       mirror: true
+//     });
+
+//     const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
+//     const enrollmentPreviewUri = convertFloatArrayToBmpUri(faceNetFloatArray, 112, 112);
+
+//     for (let i = 0; i < faceNetFloatArray.length; i++) {
+//       faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
+//     }
+
+//     const activeModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
+//     const embeddingOutput = activeModel.runSync([faceNetFloatArray.buffer]);
+//     const generatedDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[];
+
+//     return {
+//       faceDescriptor: generatedDescriptor,
+//       diagnose: enrollmentPreviewUri
+//     };
+
+//   } catch (err: any) {
+//     return { faceDescriptor: [], error: err.message || "Enrollment failure" };
+//   }
+// }
