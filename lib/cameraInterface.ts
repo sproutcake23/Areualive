@@ -216,14 +216,19 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
       rotation: isPortrait ? "0deg" : "270deg", // 🔄 FIX: Rotated 180 degrees back to upright display orientation
       mirror: true
     });
+    
 
     const faceNetFloatArray = new Float32Array(croppedFaceNetBuffer.buffer);
+
+    console.log("📸 BEFORE NORMALIZING:", faceNetFloatArray.slice(200,220));
+
     const visualCropUri = convertFloatArrayToBmpUri(faceNetFloatArray, 112, 112);
 
     for (let i = 0; i < faceNetFloatArray.length; i++) {
-      faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
+      faceNetFloatArray[i] = (faceNetFloatArray[i] * 2) - 1;    
     }
     
+    console.log("🧪 AFTER NORMALIZING:", faceNetFloatArray.slice(200,220));
 
     const mobileFaceModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
     const embeddingOutput = mobileFaceModel.runSync([faceNetFloatArray.buffer]);
@@ -251,7 +256,7 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
     );
 
     return {
-      isMatch: similarityScore >= 0.78,
+      isMatch: similarityScore >= 0.35,
       livenessConfirmed: true,
       confidence: similarityScore,
       livenessStep: currentChallenge,
@@ -323,7 +328,7 @@ export function enrollFaceFrame(input: EnrollmentInput): EnrollmentResult {
     const enrollmentPreviewUri = convertFloatArrayToBmpUri(faceNetFloatArray, 112, 112);
 
     for (let i = 0; i < faceNetFloatArray.length; i++) {
-      faceNetFloatArray[i] = (faceNetFloatArray[i] - 127.5) / 128.0;    
+      faceNetFloatArray[i] = (faceNetFloatArray[i] * 2) - 1;    
     }
 
     const activeModel = boxedMobileFaceInterpreter.unbox() as TensorflowModel;
