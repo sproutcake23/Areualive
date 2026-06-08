@@ -29,7 +29,7 @@ export default function Index() {
         {/* 📝 Button 1: Face Profile Enrollment */}
         <TouchableOpacity
           activeOpacity={0.85}
-          onPress={() => router.push("/enrollment")}
+          onPress={() => router.push("/(auth)/enrollment")}
           className="w-full bg-amber-500 py-4 rounded-2xl shadow-xl active:bg-amber-600 border border-amber-400/20"
         >
           <Text className="text-slate-950 font-black text-center text-base tracking-wider uppercase">

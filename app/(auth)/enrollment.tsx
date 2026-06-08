@@ -169,22 +169,21 @@
 import { MaterialCommunityIcons } from "@expo/vector-icons";
 import * as Crypto from "expo-crypto";
 import { useRouter } from "expo-router";
-import { useState, useMemo, useEffect, useRef } from "react";
-import { Text, TextInput, TouchableOpacity, View, Image } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Image, Text, TextInput, TouchableOpacity, View } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFrameProcessor } from "react-native-vision-camera";
 import { useFaceDetector } from "react-native-vision-camera-face-detector";
-import { useRunOnJS } from "react-native-worklets-core"; 
+import { useRunOnJS } from "react-native-worklets-core";
 import { useResizePlugin } from "vision-camera-resize-plugin";
-import { useTensorflowModel } from "react-native-fast-tflite";
-import { NitroModules } from 'react-native-nitro-modules';
 
 import { CameraPreview } from "@/components/camera/CameraPreview";
 import { FaceOverlay } from "@/components/camera/FaceOverlay";
-import { enrollFaceFrame } from "@/lib/cameraInterface"; 
-import { useAuthStore } from "@/store/authStore";
 import { useCameraSession } from "@/hooks/useCameraSession";
+import { enrollFaceFrame } from "@/lib/cameraInterface";
+import { useAuthStore } from "@/store/authStore";
+import { useGlobalModels } from "../../context/ModelContext";
 
 import * as Brightness from "expo-brightness";
 
@@ -231,9 +230,7 @@ export default function Enrollment() {
     runSoftboxLightingEngine();
   }, [busy, cameraPosition, isFlashOn]);
 
-  const faceNetPlugin = useTensorflowModel(require("../../assets/tflite/w600k_mbf_fixed_float32.tflite"), []);
-  const faceNetModel = faceNetPlugin.state === 'loaded' ? faceNetPlugin.model : undefined;
-  const boxedMobileFaceModel = useMemo(() => (faceNetModel != null ? NitroModules.box(faceNetModel as any) : undefined), [faceNetModel]);
+  const { boxedMobileFaceModel, isModelLoaded } = useGlobalModels();
 
   const setPreviewOnUIThread = useRunOnJS((uri: string) => {
     setEnrollmentPreview(uri);

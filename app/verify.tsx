@@ -323,18 +323,15 @@
 //   );
 // }
 
-import { MaterialCommunityIcons } from "@expo/vector-icons";
-import { useEffect, useState, useRef } from "react";
 import { useRouter } from "expo-router";
-import { Text, TouchableOpacity, View, Image } from "react-native";
+import { useEffect, useRef, useState } from "react";
+import { Image, Text, TouchableOpacity, View } from "react-native";
 import { useSharedValue } from "react-native-reanimated";
 import { useSafeAreaInsets } from "react-native-safe-area-context";
 import { useFrameProcessor } from "react-native-vision-camera";
 import { useFaceDetector } from "react-native-vision-camera-face-detector";
 import { useRunOnJS } from "react-native-worklets-core";
 import { useResizePlugin } from "vision-camera-resize-plugin";
-import { useTensorflowModel } from "react-native-fast-tflite";
-import { NitroModules } from "react-native-nitro-modules";
 
 import { CameraPreview } from "@/components/camera/CameraPreview";
 import { FaceOverlay } from "@/components/camera/FaceOverlay";
@@ -345,6 +342,7 @@ import { useCameraSession } from "@/hooks/useCameraSession";
 import { verifyFaceFrame } from "@/lib/cameraInterface";
 import { useAuthStore } from "@/store/authStore";
 import type { LivenessStep } from "@/types";
+import { useGlobalModels } from "../context/ModelContext";
 
 type Outcome = "idle" | "verifying" | "success" | "failed";
 
@@ -397,23 +395,10 @@ export default function Verify() {
   const isCheckingFrame = useSharedValue(false);
   const activeChallenge = useSharedValue<"blink" | "smile" | "turn">("blink");
   
-  const faceNetPlugin = useTensorflowModel(require("../assets/tflite/w600k_mbf_fixed_float32.tflite"), []);
-  const [boxedMobileFaceModel, setBoxedMobileFaceModel] = useState<any>(null);
+  // ❌ Delete your old useTensorflowModel hooks inside Verify/Enrollment
+// ✅ Replace them with this single clean line:
+  const { boxedMobileFaceModel, isModelLoaded } = useGlobalModels();
 
-  useEffect(() => {
-    if (faceNetPlugin.state === "loaded" && faceNetPlugin.model && !boxedMobileFaceModel) {
-      setBoxedMobileFaceModel(NitroModules.box(faceNetPlugin.model as any));
-    }
-  }, [faceNetPlugin.state, faceNetPlugin.model]);
-
-  const MiniFasPlugin = useTensorflowModel(require("../assets/tflite/minifasnet_float32.tflite"), []);
-  const [boxedMiniFasModel, setBoxedMiniFasModel] = useState<any>(null);
-
-  useEffect(() => {
-    if (MiniFasPlugin.state === "loaded" && MiniFasPlugin.model && !boxedMiniFasModel) {
-      setBoxedMiniFasModel(NitroModules.box(MiniFasPlugin.model as any));
-    }
-  }, [MiniFasPlugin.state, MiniFasPlugin.model]);
 
   useEffect(() => { activeChallenge.value = step; }, [step]);
 
@@ -456,7 +441,6 @@ export default function Verify() {
         currentChallenge: activeChallenge.value,
         resizePlugin: resize,
         faceDetectorPlugin: detectFaces,
-        boxedAntiSpoofInterpreter: boxedMiniFasModel,
         boxedMobileFaceInterpreter: boxedMobileFaceModel,
         user: user,
         // 🎯 Pass mutable states into background worklet thread context safely
@@ -478,7 +462,7 @@ export default function Verify() {
       isCheckingFrame.value = false;
       handleVerificationFailure(err.message || "Native runtime failure");
     }
-  }, [faceDescriptor, boxedMobileFaceModel, boxedMiniFasModel, isCheckingFrame, activeChallenge, resize, detectFaces, cameraPosition, isFlashOn]);    
+  }, [faceDescriptor, boxedMobileFaceModel, isCheckingFrame, activeChallenge, resize, detectFaces, cameraPosition, isFlashOn]);    
 
   const TypedCameraPreview = CameraPreview as any;
   const router = useRouter();

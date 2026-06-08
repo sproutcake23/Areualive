@@ -10,7 +10,7 @@ type ModelContextType = {
 const ModelContext = createContext<ModelContextType | null>(null);
 
 export function ModelProvider({ children }: { children: React.ReactNode }) {
-  const faceNetPlugin = useTensorflowModel(require("../assets/tflite/w600k_mbf_fixed_float32.tflite"), []);
+  const faceNetPlugin = useTensorflowModel(require("../assets/tflite/w600k_mbf_fixed_float16.tflite"), []);
   const [boxedMobileFaceModel, setBoxedMobileFaceModel] = useState<any>(null);
 
   useEffect(() => {
