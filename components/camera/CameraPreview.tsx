@@ -88,16 +88,46 @@
 //   );
 // }
 
-import { Camera } from "react-native-vision-camera";
+// import { Camera } from "react-native-vision-camera";
 
-interface PreviewProps {
-  device: any;
+// interface PreviewProps {
+//   device: any;
+//   hasPermission: boolean;
+//   isActive: boolean;
+//   frameProcessor: any;
+// }
+
+// export function CameraPreview({ device, hasPermission, isActive, frameProcessor }: PreviewProps) {
+//   if (!hasPermission || !device) return null;
+
+//   return (
+//     <Camera
+//       style={{ flex: 1 }}
+//       device={device}
+//       isActive={isActive}
+//       // 🎯 CRITICAL CONFIGURATION PINS FOR ANDROID FRAME SCANNING
+//       frameProcessor={frameProcessor} 
+//       pixelFormat="yuv" // 💡 Natively required for face-detector background processing
+//       enableFpsGraph={false}
+//     />
+//   );
+// }
+
+import React from 'react';
+import { Camera, useCameraDevice } from 'react-native-vision-camera';
+
+interface CameraPreviewProps {
+  cameraPosition: 'front' | 'back'; // ◄ Receive your active prop
   hasPermission: boolean;
   isActive: boolean;
   frameProcessor: any;
+  torch: 'on' | 'off';
 }
 
-export function CameraPreview({ device, hasPermission, isActive, frameProcessor }: PreviewProps) {
+export function CameraPreview({ cameraPosition, hasPermission, isActive, frameProcessor, torch }: CameraPreviewProps) {
+  // 🎯 Query the physical hardware cluster whenever the cameraPosition variable mutates!
+  const device = useCameraDevice(cameraPosition);
+
   if (!hasPermission || !device) return null;
 
   return (
@@ -105,10 +135,8 @@ export function CameraPreview({ device, hasPermission, isActive, frameProcessor 
       style={{ flex: 1 }}
       device={device}
       isActive={isActive}
-      // 🎯 CRITICAL CONFIGURATION PINS FOR ANDROID FRAME SCANNING
-      frameProcessor={frameProcessor} 
-      pixelFormat="yuv" // 💡 Natively required for face-detector background processing
-      enableFpsGraph={false}
+      frameProcessor={frameProcessor}
+      torch={torch}
     />
   );
 }

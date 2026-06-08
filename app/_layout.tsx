@@ -53,6 +53,9 @@ import { useTensorflowModel } from "react-native-fast-tflite";
 import { SyncStatusBadge } from "@/components/sync/SyncStatusBadge";
 import { useSyncQueue } from "@/hooks/useSyncQueue";
 import { registerBackgroundSync } from "@/lib/backgroundSync";
+import { Slot } from "expo-router";
+import { ModelProvider } from "../context/ModelContext";
+
 
 export default function RootLayout() {
   // 🔄 Driving foreground sync states
@@ -88,7 +91,11 @@ export default function RootLayout() {
   */
 
   return (
+    
     <GestureHandlerRootView style={{ flex: 1 }}>
+      <ModelProvider>
+        <Slot />
+      </ModelProvider>
       <SafeAreaProvider>
         {/* The navigator runs clean with zero conflicting view layers */}
         <Stack screenOptions={{ headerShown: false }} />
