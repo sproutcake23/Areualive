@@ -339,18 +339,28 @@ import { LivenessPrompts } from "@/components/camera/LivenessPrompts";
 import { Button } from "@/components/common/Button";
 import { config } from "@/constants/config";
 import { useCameraSession } from "@/hooks/useCameraSession";
-import { verifyFaceFrame } from "@/lib/cameraInterface";
+import { verifyFaceFrame, checkChallenge } from "@/lib/cameraInterface";
 import { useAuthStore } from "@/store/authStore";
-import type { LivenessStep } from "@/types";
+import type { LivenessStep, VerificationPhase } from "@/types";
 import { useGlobalModels } from "../context/ModelContext";
 
-type Outcome = "idle" | "verifying" | "success" | "failed";
+const PROMPT_LABELS: Record<string, string> = {
+  blink: "Blink your eyes",
+  smile: "Smile",
+  turn: "Turn your head",
+};
 
-const OUTCOME_MESSAGE: Record<Outcome, string> = {
-  idle: "Position your face in the frame, then verify.",
-  verifying: "Running real-time AI verification…",
-  success: "Attendance recorded successfully.",
-  failed: "Verification failed. Unknown profile or spoof detected.",
+const getPhaseMessage = (phase: VerificationPhase, challengePair: LivenessStep[]): string => {
+  switch(phase) {
+    case "idle": return "Position your face, then tap Verify.";
+    case "challenge_1": return challengePair[0] ? PROMPT_LABELS[challengePair[0]] : "";
+    case "challenge_2": return challengePair[1] ? PROMPT_LABELS[challengePair[1]] : "";
+    case "awaiting_frontal": return "✓ Challenges passed. Look straight ahead.";
+    case "running_inference": return "Keep your face straight...";
+    case "success": return "Attendance recorded.";
+    case "failed": return "Verification failed.";
+    default: return "";
+  }
 };
 
 import * as Brightness from "expo-brightness";
@@ -364,22 +374,21 @@ export default function Verify() {
   const detectFaces = useFaceDetector({ performanceMode: 'accurate', landmarkMode: 'all', classificationMode: 'all' });
   const { resize } = useResizePlugin();
 
-  // 🎛️ 1. Dynamic Hardware Configuration States
   const [cameraPosition, setCameraPosition] = useState<'front' | 'back'>('front');
   const [isFlashOn, setIsFlashOn] = useState(false);
   
-  const [outcome, setOutcome] = useState<Outcome>("idle");
-  const [step, setStep] = useState<LivenessStep>(config.LIVENESS_STEPS[0]);
+  const [phase, setPhase] = useState<VerificationPhase>("idle");
+  const [challengePairState, setChallengePairState] = useState<LivenessStep[]>([]);
   const [croppedPreview, setCroppedPreview] = useState<string | null>(null);
   const [errorDetails, setErrorDetails] = useState<string | null>(null);
 
   const initialBrightness = useRef<number>(0.5);
+  const isVerifying = phase !== "idle" && phase !== "success" && phase !== "failed";
 
-  // 💡 2. Automated Window-Level Screen Flash Controller
   useEffect(() => {
     async function runSoftboxLightingEngine() {
       try {
-        if (outcome === "verifying" && cameraPosition === "front" && isFlashOn) {
+        if (isVerifying && cameraPosition === "front" && isFlashOn) {
           initialBrightness.current = await Brightness.getBrightnessAsync();
           await Brightness.setBrightnessAsync(1.0);
         } else {
@@ -390,17 +399,20 @@ export default function Verify() {
       }
     }
     runSoftboxLightingEngine();
-  }, [outcome, cameraPosition, isFlashOn]);
+  }, [isVerifying, cameraPosition, isFlashOn]);
 
   const isCheckingFrame = useSharedValue(false);
-  const activeChallenge = useSharedValue<"blink" | "smile" | "turn">("blink");
+  const challengePair = useSharedValue<LivenessStep[]>([]);
+  const currentPhase = useSharedValue<VerificationPhase>("idle");
+  const challengeConfirmCount = useSharedValue(0);
+  const frontalDelayCount = useSharedValue(0);
+  const inferenceFrameCount = useSharedValue(0);
   
-  // ❌ Delete your old useTensorflowModel hooks inside Verify/Enrollment
-// ✅ Replace them with this single clean line:
   const { boxedMobileFaceModel, isModelLoaded } = useGlobalModels();
 
-
-  useEffect(() => { activeChallenge.value = step; }, [step]);
+  const handlePhaseAdvance = useRunOnJS((nextPhase: VerificationPhase) => {
+    setPhase(nextPhase);
+  }, []);
 
   const handleVerificationSuccess = useRunOnJS((result: any) => {
     console.log(
@@ -409,13 +421,15 @@ export default function Verify() {
       `\n  ├─ Vector Matching Confidence: ${(result.confidence * 100).toFixed(4)}%`
     );
     if (result.diagonise) setCroppedPreview(result.diagonise);
-    setOutcome("success");
+    setPhase("success");
+    currentPhase.value = "success";
   }, [user]);
 
   const handleVerificationFailure = useRunOnJS((errorMessage: string) => {
     console.log("❌ Verification failed:", errorMessage);
     setErrorDetails(errorMessage);
-    setOutcome("failed");
+    setPhase("failed");
+    currentPhase.value = "failed";
   }, []);
 
   const setLivePreviewOnUIThread = useRunOnJS((uri: string) => {
@@ -423,46 +437,114 @@ export default function Verify() {
   }, []);
 
   const onVerify = () => {
-    if (!faceDescriptor || outcome === "verifying") return;
-    setOutcome("verifying");
+    if (!faceDescriptor || isVerifying) return;
+    const pool: LivenessStep[] = ["blink", "smile", "turn"];
+    const shuffled = pool.sort(() => Math.random() - 0.5).slice(0, 2);
+    challengePair.value = shuffled;
+    setChallengePairState(shuffled);
     setErrorDetails(null);
+    setPhase("challenge_1");
+    currentPhase.value = "challenge_1";
+    inferenceFrameCount.value = 0;
   };
   
   const frameProcessor = useFrameProcessor((frame) => {
     "worklet";
     if (isCheckingFrame.value || !faceDescriptor || boxedMobileFaceModel == null) return;
 
-    isCheckingFrame.value = true;
+    const currentP = currentPhase.value;
 
-    try {
-      const result = verifyFaceFrame({
-        frame,
-        enrolledFaceDescriptor: faceDescriptor,
-        currentChallenge: activeChallenge.value,
-        resizePlugin: resize,
-        faceDetectorPlugin: detectFaces,
-        boxedMobileFaceInterpreter: boxedMobileFaceModel,
-        user: user,
-        // 🎯 Pass mutable states into background worklet thread context safely
-        cameraPosition: cameraPosition, 
-        isFlashOn: isFlashOn,           
-      });
+    if (currentP === "challenge_1" || currentP === "challenge_2") {
+      const faces = detectFaces.detectFaces(frame);
+      if (!faces || faces.length === 0) return;
 
-      if (result.isMatch && result.livenessConfirmed) {
-        handleVerificationSuccess(result);
-      } else if (result.error) {
-        if (result.diagonise) setLivePreviewOnUIThread(result.diagonise);
-        isCheckingFrame.value = false;
-        handleVerificationFailure(result.error);
+      const challengeIndex = currentP === "challenge_1" ? 0 : 1;
+      if (!challengePair.value || challengePair.value.length < 2) return;
+      
+      const challenge = challengePair.value[challengeIndex];
+      const passed = checkChallenge(faces[0], challenge);
+
+      if (passed) {
+        challengeConfirmCount.value += 1;
+        if (challengeConfirmCount.value >= config.LIVENESS_CHALLENGE_CONFIRM_FRAMES) {
+          challengeConfirmCount.value = 0;
+          if (currentP === "challenge_1") {
+             currentPhase.value = "challenge_2";
+             handlePhaseAdvance("challenge_2");
+             return; // Stop here and wait for next frame to start challenge 2
+          } else {
+             // Both challenges passed. Go directly to inference.
+             currentPhase.value = "running_inference";
+             handlePhaseAdvance("running_inference");
+             // DO NOT return here, so it can fall through to the inference block below
+          }
+        } else {
+          return; // Wait for more frames to confirm the current challenge
+        }
       } else {
-        if (result.diagonise) setLivePreviewOnUIThread(result.diagonise);
-        isCheckingFrame.value = false; 
+        challengeConfirmCount.value = 0;
+        return; // Challenge not passed in this frame
       }
-    } catch (err: any) {
-      isCheckingFrame.value = false;
-      handleVerificationFailure(err.message || "Native runtime failure");
     }
-  }, [faceDescriptor, boxedMobileFaceModel, isCheckingFrame, activeChallenge, resize, detectFaces, cameraPosition, isFlashOn]);    
+
+    if (currentPhase.value === "awaiting_frontal") {
+      const faces = detectFaces.detectFaces(frame);
+      if (!faces || faces.length === 0) return;
+      
+      // Delay before running inference so the user has a moment to read "Challenges passed"
+      // and look straight ahead. We use a shared value counter for the delay in frames.
+      // 30 frames at 30fps is about 1 second.
+      if (frontalDelayCount.value < 70) {
+        frontalDelayCount.value += 1;
+        return;
+      }
+      frontalDelayCount.value = 0;
+
+      // We removed the strict FRONTAL_YAW_THRESHOLD_DEG check here as requested.
+      // As long as a face is detected after the challenges, we proceed to inference.
+      currentPhase.value = "running_inference";
+      handlePhaseAdvance("running_inference");
+      // Fall through to inference
+    }
+
+    if (currentPhase.value === "running_inference") {
+      inferenceFrameCount.value += 1;
+      
+      if (inferenceFrameCount.value > 100) {
+        handleVerificationFailure("Face did not match enrolled profile. Trial limit reached.");
+        return;
+      }
+
+      isCheckingFrame.value = true;
+      try {
+        const result = verifyFaceFrame({
+          frame,
+          enrolledFaceDescriptor: faceDescriptor,
+          currentChallenge: "blink", // Not used anymore but kept for type compatibility
+          resizePlugin: resize,
+          faceDetectorPlugin: detectFaces,
+          boxedMobileFaceInterpreter: boxedMobileFaceModel,
+          user: user,
+          cameraPosition: cameraPosition, 
+          isFlashOn: isFlashOn,           
+        });
+
+        if (result.isMatch && result.livenessConfirmed) {
+          handleVerificationSuccess(result);
+        } else if (result.error) {
+          if (result.diagonise) setLivePreviewOnUIThread(result.diagonise);
+          isCheckingFrame.value = false;
+          handleVerificationFailure(result.error);
+        } else {
+          if (result.diagonise) setLivePreviewOnUIThread(result.diagonise);
+          isCheckingFrame.value = false; 
+        }
+      } catch (err: any) {
+        isCheckingFrame.value = false;
+        handleVerificationFailure(err.message || "Native runtime failure");
+      }
+    }
+  }, [faceDescriptor, boxedMobileFaceModel, isCheckingFrame, challengePair, currentPhase, challengeConfirmCount, inferenceFrameCount, resize, detectFaces, cameraPosition, isFlashOn]);    
 
   const TypedCameraPreview = CameraPreview as any;
   const router = useRouter();
@@ -474,38 +556,25 @@ export default function Verify() {
       <View className="absolute inset-0 z-10">
         {defaultDevice && (
           <TypedCameraPreview 
-            // 🎯 FIX 1: Pass the dynamic toggle variable value explicitly down to the context layer
             cameraPosition={cameraPosition} 
             hasPermission={hasPermission} 
             isActive={isActive} 
-            frameProcessor={outcome === "verifying" ? frameProcessor : undefined} 
-            
-            // ⚡ HARDWARE TORCH CONTROL: Only turns on the real LED for the back camera array
-            torch={cameraPosition === "back" && isFlashOn && outcome === "verifying" ? "on" : "off"} 
+            frameProcessor={isVerifying ? frameProcessor : undefined} 
+            torch={cameraPosition === "back" && isFlashOn && isVerifying ? "on" : "off"} 
           />
         )}
         
-        {/* Hide overlay line markers when front flash mask is active */}
-        {!(outcome === "verifying" && cameraPosition === "front" && isFlashOn) && <FaceOverlay />}
+        {!(isVerifying && cameraPosition === "front" && isFlashOn) && <FaceOverlay />}
       </View>
 
-      {/* =============================================================================
-          💡 FRONT CAMERA FULL-SCREEN SOFTBOX FLASH MASK (Option 2)
-          ============================================================================= */}
-      {/* 🎯 FIX 2: Check for both outcome === "verifying" AND front camera position AND flash enabled */}
-      {outcome === "verifying" && cameraPosition === "front" && isFlashOn && (
+      {isVerifying && cameraPosition === "front" && isFlashOn && (
         <View pointerEvents="none" className="absolute inset-0 z-20 bg-white flex justify-center items-center">
           <View className="w-72 h-72 rounded-full border-[600px] border-white bg-transparent absolute" style={{ transform: [{ scale: 1.2 }] }} />
           <Text className="text-slate-800 font-bold tracking-widest text-sm absolute top-24">LOOK HERE • SCANNING LIVENESS</Text>
         </View>
       )}
 
-      {/* =============================================================================
-          🎛️ FLOATING HARDWARE CONTROL DECK (Top-Right Corner)
-          ============================================================================= */}
       <View className="absolute top-12 right-6 z-50 flex-row gap-3">
-        
-        {/* ⚡ Toggle Flash Button (Middle Button) */}
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => setIsFlashOn(!isFlashOn)}
@@ -518,7 +587,6 @@ export default function Verify() {
           </Text>
         </TouchableOpacity>
 
-        {/* 🔄 Flip Camera Button (Rightmost Button) */}
         <TouchableOpacity
           activeOpacity={0.7}
           onPress={() => {
@@ -532,9 +600,6 @@ export default function Verify() {
         </TouchableOpacity>
       </View>
 
-      {/* =============================================================================
-        ⬅️ FLOATING BACK ARROW (Top-Left Corner)
-        ============================================================================= */}
       <TouchableOpacity
         activeOpacity={0.7}
         onPress={() => router.back()}
@@ -543,7 +608,6 @@ export default function Verify() {
         <Text className="text-white font-medium text-xs tracking-wider">← MENU</Text>
       </TouchableOpacity>
 
-      {/* Split-Screen Diagnostic Panels */}
       {user?.profileImage && (
         <View className="absolute top-36 left-6 z-50 border-2 border-blue-500 rounded-2xl overflow-hidden shadow-2xl bg-slate-900 p-2">
           <Text className="text-[10px] text-blue-500 font-bold text-center mb-1">ENROLLED BASELINE</Text>
@@ -560,23 +624,14 @@ export default function Verify() {
         </View>
       )}
 
-      <LivenessPrompts step={step} />
-      
-      {outcome === "idle" && (
-        <View className="absolute top-44 left-6 right-6 z-50 flex-row justify-around bg-black/40 p-2 rounded-xl">
-          {(["blink", "smile", "turn"] as const).map((challenge) => (
-            <TouchableOpacity key={challenge} onPress={() => setStep(challenge)} className={`px-3 py-1 rounded-lg ${step === challenge ? 'bg-white' : 'bg-transparent'}`}>
-              <Text className={step === challenge ? 'text-black font-bold' : 'text-white'}>{challenge.toUpperCase()}</Text>
-            </TouchableOpacity>
-          ))}
-        </View>
-      )}
+      {phase === "challenge_1" && <LivenessPrompts label={PROMPT_LABELS[challengePairState[0]]} />}
+      {phase === "challenge_2" && <LivenessPrompts label={PROMPT_LABELS[challengePairState[1]]} />}
 
       <View className="absolute bottom-0 left-0 right-0 z-50 px-6 gap-4" style={{ paddingBottom: Math.max(insets.bottom, 24) }} pointerEvents="box-none">
         <Text className="text-center text-lg font-medium text-white shadow-sm mb-2 bg-black/50 p-2 rounded-xl">
-          {errorDetails ? `❌ ${errorDetails}` : OUTCOME_MESSAGE[outcome]}
+          {errorDetails ? `❌ ${errorDetails}` : getPhaseMessage(phase, challengePairState)}
         </Text>
-        <Button label={outcome === "verifying" ? "Analyzing face..." : "Verify Identity"} onPress={onVerify} disabled={outcome === "verifying"} />
+        <Button label={isVerifying ? "Analyzing face..." : "Verify Identity"} onPress={onVerify} disabled={isVerifying} />
       </View>
     </View>
   );

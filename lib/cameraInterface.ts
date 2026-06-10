@@ -1,7 +1,8 @@
 import type { TensorflowModel } from "react-native-fast-tflite";
 import type { Frame } from "react-native-vision-camera";
+import { config } from "@/constants/config";
 
-export type FaceVerificationInput = {
+export interface FaceVerificationInput {
   frame: Frame;
   enrolledFaceDescriptor: number[];
   currentChallenge: "blink" | "smile" | "turn";
@@ -130,6 +131,38 @@ function calculateCosineSimilarity(vecA: number[], vecB: number[]): number {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
+export function checkChallenge(
+  face: any,
+  challenge: "blink" | "smile" | "turn"
+): boolean {
+  "worklet";
+  const leftOpenProb = face.leftEyeOpenProbability ?? -1;
+  const rightOpenProb = face.rightEyeOpenProbability ?? -1;
+  const smileProb = face.smilingProbability ?? -1; 
+  const headYaw = face.yawAngle ?? 0;
+
+  let challengePassed = false; // added console og for debugging
+  if (challenge === "blink") {
+    const avgOpenness = (leftOpenProb + rightOpenProb) / 2.0;
+    console.log(`[Blink Challenge] Left: ${leftOpenProb?.toFixed(3)}, Right: ${rightOpenProb?.toFixed(3)}, Avg: ${avgOpenness?.toFixed(3)} | Threshold: ${config.BLINK_THRESHOLD}`);
+    if (leftOpenProb !== -1 && rightOpenProb !== -1 && avgOpenness < config.BLINK_THRESHOLD) {
+      challengePassed = true;
+      console.log(`[Blink Challenge] PASSED!`);
+    }
+  } else if (challenge === "smile") {
+    const lm = face.landmarks;
+    if (lm && lm.MOUTH_LEFT && lm.MOUTH_RIGHT && lm.NOSE_BASE && lm.MOUTH_BOTTOM) {
+      const lipWidth = Math.sqrt(Math.pow(lm.MOUTH_RIGHT.x - lm.MOUTH_LEFT.x, 2) + Math.pow(lm.MOUTH_RIGHT.y - lm.MOUTH_LEFT.y, 2));
+      const lipHeight = Math.sqrt(Math.pow(lm.MOUTH_BOTTOM.y - lm.NOSE_BASE.y, 2) + Math.pow(lm.MOUTH_BOTTOM.x - lm.NOSE_BASE.x, 2));
+      if (lipWidth / lipHeight > 1.05 || smileProb > 0.70) challengePassed = true;
+    }
+  } else if (challenge === "turn") {
+    if (Math.abs(headYaw) > 10) challengePassed = true;
+  }
+
+  return challengePassed;
+}
+
 // =============================================================================
 // 🔓 1. LIVE VERIFICATION FUNCTION (ANTISPOOF REMOVED)
 // =============================================================================
@@ -162,26 +195,6 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
       "📊 [Verify Telemetry]:",
       `Left Open: ${leftOpenProb.toFixed(2)} | Right Open: ${rightOpenProb.toFixed(2)} | Yaw: ${headYaw.toFixed(1)}° | SmileProb: ${smileProb.toFixed(1)}`
     );
-
-    let challengePassed = false;
-    if (currentChallenge === "blink") {
-      if (leftOpenProb !== -1 && rightOpenProb !== -1 && (leftOpenProb + rightOpenProb) / 2.0 < 0.25) {
-        challengePassed = true;
-      }
-    } else if (currentChallenge === "smile") {
-      const lm = primaryFace.landmarks;
-      if (lm.MOUTH_LEFT && lm.MOUTH_RIGHT && lm.NOSE_BASE && lm.MOUTH_BOTTOM) {
-        const lipWidth = Math.sqrt(Math.pow(lm.MOUTH_RIGHT.x - lm.MOUTH_LEFT.x, 2) + Math.pow(lm.MOUTH_RIGHT.y - lm.MOUTH_LEFT.y, 2));
-        const lipHeight = Math.sqrt(Math.pow(lm.MOUTH_BOTTOM.y - lm.NOSE_BASE.y, 2) + Math.pow(lm.MOUTH_BOTTOM.x - lm.NOSE_BASE.x, 2));
-        if (lipWidth / lipHeight > 1.05 || smileProb > 0.70) challengePassed = true;
-      }
-    } else if (currentChallenge === "turn") {
-      if (Math.abs(headYaw) > 10) challengePassed = true;
-    }
-
-    if (!challengePassed) {
-      return { isMatch: false, livenessConfirmed: false, confidence: 0, livenessStep: currentChallenge };
-    }
 
     // --- SEAMLESS COORDINATE TRANSLATION MATRIX ---
     const bounding = primaryFace.bounds;
@@ -233,7 +246,7 @@ export function verifyFaceFrame(input: FaceVerificationInput): FaceVerificationR
     const currentFaceDescriptor = Array.from(new Float32Array(embeddingOutput[0])) as number[]; 
 
     const similarityScore = calculateCosineSimilarity(currentFaceDescriptor, enrolledFaceDescriptor);
-    console.log(`Similarity score: ${similarityScore}`)
+    console.log(`[DEBUG - Face Match] Cosine Similarity Score: ${similarityScore.toFixed(4)} | Threshold: 0.30`);
 
     return {
       isMatch: similarityScore >= 0.30,

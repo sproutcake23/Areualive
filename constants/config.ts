@@ -18,4 +18,11 @@ export const config = {
   // Minimum interval (seconds) between background sync attempts. The OS may
   // extend this; it is never shorter.
   BACKGROUND_SYNC_INTERVAL_SEC: 15 * 60,
+
+  LIVENESS_CHALLENGE_CONFIRM_FRAMES: 2, // minimum frames required for confirm challange
+
+  FRONTAL_YAW_THRESHOLD_DEG: 0, // below this face will be straight
+
+  // Blink challenge: average eye open probability must be below this to pass
+  BLINK_THRESHOLD: 0.6,
 } as const;

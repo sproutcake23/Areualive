@@ -10,6 +10,15 @@ export type {
   EnrollmentResult,
 } from "@/lib/cameraInterface";
 
+export type VerificationPhase =
+  | "idle"
+  | "challenge_1"
+  | "challenge_2"
+  | "awaiting_frontal"
+  | "running_inference"
+  | "success"
+  | "failed";
+
 // An attendance record as stored in expo-sqlite. See AGENTS.md → Local Data Model.
 export type AttendanceRecord = {
   id: string; // UUID via expo-crypto, generated locally
