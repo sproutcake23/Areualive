@@ -14,7 +14,6 @@ export type VerificationPhase =
   | "idle"
   | "challenge_1"
   | "challenge_2"
-  | "awaiting_frontal"
   | "running_inference"
   | "success"
   | "failed";

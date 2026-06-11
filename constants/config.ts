@@ -19,10 +19,13 @@ export const config = {
   // extend this; it is never shorter.
   BACKGROUND_SYNC_INTERVAL_SEC: 15 * 60,
 
-  LIVENESS_CHALLENGE_CONFIRM_FRAMES: 2, // minimum frames required for confirm challange
+  // Minimum consecutive frames required to confirm a liveness challenge.
+  LIVENESS_CHALLENGE_CONFIRM_FRAMES: 2,
 
-  FRONTAL_YAW_THRESHOLD_DEG: 0, // below this face will be straight
-
-  // Blink challenge: average eye open probability must be below this to pass
+  // Blink challenge: average eye open probability must be BELOW this to pass.
   BLINK_THRESHOLD: 0.6,
+
+  // How many inference frames to attempt before declaring failure.
+  // At 30fps this is ~3.3 seconds of continuous attempts.
+  INFERENCE_FRAME_LIMIT: 100,
 } as const;
