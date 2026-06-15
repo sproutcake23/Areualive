@@ -10,6 +10,14 @@ export type {
   EnrollmentResult,
 } from "@/lib/cameraInterface";
 
+export type VerificationPhase =
+  | "idle"
+  | "challenge_1"
+  | "challenge_2"
+  | "running_inference"
+  | "success"
+  | "failed";
+
 // An attendance record as stored in expo-sqlite. See AGENTS.md → Local Data Model.
 export type AttendanceRecord = {
   id: string; // UUID via expo-crypto, generated locally
@@ -26,6 +34,7 @@ export type EnrolledUser = {
   id: string;
   name: string;
   enrolledAt: string; // ISO 8601
+  profileImage?: string; // 🔥 ADD THIS LINE to allow the Base64 snapshot string!
 };
 
 // Drives the always-visible sync status badge.

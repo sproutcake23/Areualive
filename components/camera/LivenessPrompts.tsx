@@ -10,19 +10,11 @@ import Animated, {
   withTiming,
 } from "react-native-reanimated";
 
-import type { LivenessStep } from "@/types";
-
-const PROMPT_LABELS: Record<LivenessStep, string> = {
-  blink: "Blink your eyes",
-  smile: "Smile",
-  turn: "Turn your head",
-};
-
 type Props = {
-  step: LivenessStep;
+  label: string;
 };
 
-export function LivenessPrompts({ step }: Props) {
+export function LivenessPrompts({ label }: Props) {
   const opacity = useSharedValue(1);
 
   useEffect(() => {
@@ -30,6 +22,8 @@ export function LivenessPrompts({ step }: Props) {
   }, [opacity]);
 
   const animatedStyle = useAnimatedStyle(() => ({ opacity: opacity.value }));
+
+  if (!label) return null;
 
   return (
     <View
@@ -41,7 +35,7 @@ export function LivenessPrompts({ step }: Props) {
         className="rounded-2xl bg-black/60 px-6 py-3"
       >
         <Text className="text-2xl font-semibold text-white">
-          {PROMPT_LABELS[step]}
+          {label}
         </Text>
       </Animated.View>
     </View>
