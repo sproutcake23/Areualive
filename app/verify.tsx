@@ -16,7 +16,9 @@ import { LivenessPrompts } from "@/components/camera/LivenessPrompts";
 import { Button } from "@/components/common/Button";
 import { config } from "@/constants/config";
 import { useCameraSession } from "@/hooks/useCameraSession";
+import { useSyncQueue } from "@/hooks/useSyncQueue";
 import { checkChallenge, verifyFaceFrame } from "@/lib/cameraInterface";
+import { captureAttendance } from "@/lib/attendance";
 import { useAuthStore } from "@/store/authStore";
 import type { LivenessStep, VerificationPhase } from "@/types";
 import * as Brightness from "expo-brightness";
@@ -63,6 +65,7 @@ export default function Verify() {
   const { device: defaultDevice, hasPermission, isActive } = useCameraSession();
   const user = useAuthStore((s) => s.user);
   const faceDescriptor = useAuthStore((s) => s.faceDescriptor);
+  const { runSync } = useSyncQueue();
 
   const insets = useSafeAreaInsets();
 
@@ -158,8 +161,15 @@ export default function Verify() {
       `\n  ├─ Vector Matching Confidence: ${(result.confidence * 100).toFixed(4)}%`
     );
     if (result.diagonise) setCroppedPreview(result.diagonise);
+    
+    if (user?.id) {
+      captureAttendance(user.id, result)
+        .then(() => runSync())
+        .catch((err) => console.error("Failed to capture attendance record:", err));
+    }
+
     setPhase("success");
-  }, [user]);
+  }, [user, runSync]);
 
   const handleVerificationFailure = useRunOnJS((errorMessage: string) => {
     console.log("❌ Verification failed:", errorMessage);
